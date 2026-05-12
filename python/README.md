@@ -1,0 +1,87 @@
+## Python Code Style
+
+Binding style rules for Python projects, target **Python 3.12+** (with 3.13 features noted where relevant). Prioritize **correctness**, **explicitness**, **simplicity** — never cleverness, never abstraction for its own sake.
+
+This guide extends and defers to:
+
+- **[PEP 8](https://peps.python.org/pep-0008/)** — Python's canonical style guide.
+- **[PEP 20 (The Zen of Python)](https://peps.python.org/pep-0020/)** — the worldview ("Explicit is better than implicit. Simple is better than complex. Errors should never pass silently.").
+- **[PEP 484](https://peps.python.org/pep-0484/) + [PEP 604](https://peps.python.org/pep-0604/) + [PEP 695](https://peps.python.org/pep-0695/)** — type hints, union syntax, modern generics.
+- **[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)** — docstring conventions and additional taste.
+
+Where our guidance conflicts with PEP 8 or PEP 20, **the PEPs win.** This guide adds project-specific conventions: ruthless type hints, Tiger-style discipline (50-line function cap, assertion density, bounded loops), structured concurrency via `asyncio.TaskGroup`, and a strong preference for `@dataclass(frozen=True, slots=True)` + `Protocol` over inheritance.
+
+### Style Priorities
+
+1. **Clarity** — code's purpose is clear to the reader.
+2. **Simplicity** — the simplest approach that accomplishes the goal.
+3. **Concision** — high signal-to-noise ratio.
+4. **Maintainability** — easy to modify correctly over time.
+5. **Consistency** — matches the surrounding codebase.
+
+Resolve rule conflicts in this order. Consistency is the tiebreaker, never an override.
+
+---
+
+## Table of Contents
+
+| # | Document | Scope |
+|---|----------|-------|
+| 01 | [Formatting & Tooling](./01-formatting-and-tooling.md) | Ruff (lint + format), mypy strict, line length, function-size cap, pre-commit |
+| 02 | [Naming Conventions](./02-naming-conventions.md) | `snake_case`, `PascalCase`, `_private`, `__dunder`, module names |
+| 03 | [Type Hints](./03-type-hints.md) | Type every public signature, `\|` over `Optional`, `Protocol` for structural typing, no `Any` in public API |
+| 04 | [Variables & Declarations](./04-variables-and-declarations.md) | Mutable default args, `Final`, `ClassVar`, walrus, module-level constants |
+| 05 | [Functions](./05-functions.md) | Keyword-only args, default args, decorators, `functools`, single-purpose, 50-line cap |
+| 06 | [Classes & Data Modeling](./06-classes-and-data-modeling.md) | `@dataclass(frozen=True, slots=True)`, `Protocol`, ABCs sparingly, `enum`, no inheritance for reuse |
+| 07 | [Pythonic Idioms](./07-pythonic-idioms.md) | Context managers, generators, comprehensions, EAFP, dunders, `pathlib`, f-strings, `match`/`case` |
+| 08 | [Error Handling](./08-error-handling.md) | Custom exception hierarchies, exception chaining, no bare `except`, `contextlib.suppress`, fail fast |
+| 09 | [Concurrency & Async](./09-concurrency.md) | `asyncio.TaskGroup`, `asyncio.timeout`, cancellation, `threading` only when forced, GIL realities |
+| 10 | [API Design](./10-api-design.md) | `Protocol` interfaces, keyword-only public APIs, `__all__`, deprecation, semver discipline |
+| 11 | [Testing](./11-testing.md) | pytest, fixtures, `@pytest.mark.parametrize`, hypothesis, no shared state, `pytest-asyncio` |
+| 12 | [Package Organization](./12-package-organization.md) | `src/` layout, `pyproject.toml`, `__init__.py`, no cyclic imports |
+| 13 | [Resource Management](./13-resource-management.md) | `with`/`async with`, `contextlib`, `asyncio` cancellation, timeouts, `secrets`/`os.urandom` |
+| 14 | [Documentation](./14-documentation.md) | Google-style docstrings, examples, type hints document what docstrings don't |
+| 15 | [Performance](./15-performance.md) | Profile first, generators, `__slots__`, `functools.lru_cache`, asyncio cost, GIL, no premature opt |
+
+---
+
+## Cross-Cutting Concerns
+
+Security, performance, and git practices are covered in the [root-level code style guide](../README.md). The cross-cutting docs are language-agnostic; this guide adapts them to Python.
+
+## Design Goals
+
+**Correctness > performance > developer experience.** When they conflict, this ordering decides.
+
+## Philosophy
+
+Python's design ("There should be one — and preferably only one — obvious way to do it") is closer to our principles than most languages. The Zen of Python *is* most of this guide. The rest is discipline overlays that the language doesn't enforce but a serious codebase needs.
+
+1. **Data + functions, not objects.** `@dataclass(frozen=True, slots=True)` for state, `Protocol` for behavior contracts, plain functions for transformations. Inheritance for shared *interface*, not shared *code* — and even then, prefer `Protocol`.
+2. **Types are part of the contract.** Type-hint every public signature. Run mypy in strict mode. No `Any` in public API. Use `Protocol` for structural typing — Python's duck typing made type-safe.
+3. **Immutable by default.** `frozen=True` on dataclasses. `tuple` over `list` when the contents don't change. No mutable default arguments. Mutability is an explicit choice you have to type — that's the right way around.
+4. **Explicit over implicit.** No global state. No module-level side effects in imports. No `from foo import *` outside of explicit re-exports. Every dependency in the function signature or constructor. Magic is for libraries; applications are explicit.
+5. **Errors are values you handle, not panics you ignore.** Custom exception hierarchies for the domain. Always raise *something* — never silently `pass`. Exception chaining (`raise NewError(...) from cause`) preserves debugging context.
+6. **Async is structured.** `asyncio.TaskGroup` for parallel work, `asyncio.timeout` for bounds. Never bare `asyncio.gather` without explicit error semantics. Never `asyncio.create_task` and drop the reference.
+7. **Small functions, breathing room.** Hard limit: 50 lines (tighter than Kotlin's 60 — Python is even more concise). Aim 10–25. Separate logical sections with blank lines.
+8. **Assert aggressively.** `assert` is for invariants, `if not ...: raise ValueError(...)` is for input validation. Minimum two checks per function on average — preconditions at entry, invariants at boundaries. Don't run with `-O` in production *and* rely on assertions for safety; assertions document and guard during development.
+9. **Bound everything.** All loops, retries, queues, timeouts, async tasks. No unbounded `while True`. No recursion in library code where iteration works. Use `itertools.islice` to bound lazy iterators when feeding them into APIs.
+10. **Use `match`/`case` for sealed sets; tag with a discriminator field.** Exhaustive `match` over a tagged union (sum types modeled with `Literal` discriminators or sealed-class-style hierarchies) makes refactors visible — mypy flags missing cases.
+11. **Embrace Pythonic idioms — but deliberately.** Context managers, generators, comprehensions, EAFP, decorators, dunders. Each has a *right* use. Reaching for the clever one when the boring one fits is anti-Zen.
+12. **`Protocol` over ABC. Composition over inheritance.** A `Protocol` documents required behavior without forcing inheritance. An ABC forces a base class. Pick Protocol unless you genuinely need the base class for shared implementation.
+13. **Performance from the outset, but pay for what you use.** `__slots__` and `frozen=True` on hot dataclasses. Generators for large/streaming data. `functools.lru_cache` for pure-function memoization. Don't pre-optimize without a profile.
+14. **Zero technical debt.** Public API is a contract — Python's lack of enforcement is not a license to break it. `__all__` declares the surface. Semver is a promise.
+
+## Influences
+
+- **[PEP 8](https://peps.python.org/pep-0008/), [PEP 20](https://peps.python.org/pep-0020/)** — canonical Python.
+- **[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)** — Google's adaptation; useful supplements on docstrings and module structure.
+- **[Effective Python (Brett Slatkin)](https://effectivepython.com/)** — community canon for idiomatic patterns.
+- **[Hypermodern Python (Claudio Jolowicz)](https://cjolowicz.github.io/posts/hypermodern-python-01-setup/)** — modern tooling baseline (Ruff, mypy, pytest, pre-commit, pyproject.toml).
+- **[Trio's structured concurrency](https://trio.readthedocs.io/en/stable/reference-core.html)** — informs `asyncio.TaskGroup` patterns even though we use stdlib asyncio.
+- **[Azure SDK for Python Design Guidelines](https://azure.github.io/azure-sdk/python_design.html)** — prescriptive, battle-tested guidance on building Python SDKs: client class shape, constructor signature, method verb taxonomy (`get_*`/`list_*`/`create_*`/`begin_*`), sync+async separation via `.aio` submodule, pageable iterators, long-running-operation pollers, conditional-request kwargs, retries/transport/credential injection. Adopted into chapters 02, 06, 08, 09, 10.
+- **TigerBeetle Tiger Style** — assertion density, 50-line function limit, limits on everything, no recursion, zero technical debt.
+
+## Applying Style Changes
+
+When adopting a new rule or migrating away from a deprecated pattern, apply the change at the **module / package level or larger** — never mix two styles within the same module. A half-migrated module is more confusing than either end state.
