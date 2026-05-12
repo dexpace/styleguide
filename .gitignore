@@ -1,0 +1,47 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+dist/
+build/
+
+# JVM / Kotlin / Gradle
+.gradle/
+build/
+out/
+*.class
+local.properties
+*.iml
+
+# Go
+*.test
+*.out
+*.exe
+vendor/
+
+# Logs and tmp
+*.log
+*.tmp
