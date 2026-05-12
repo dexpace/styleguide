@@ -48,7 +48,7 @@ feat/add-hotel-search
 fix/null-pointer-in-auth
 refactor/extract-http-pipeline
 test/add-booking-integration-tests
-chore/upgrade-jackson-2.20
+chore/upgrade-deps
 ```
 
 - Keep branch names under 50 characters. They appear in merge commits and logs.

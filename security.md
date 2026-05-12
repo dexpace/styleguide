@@ -86,6 +86,16 @@ type Credential struct { Key, Secret string }
 func (c Credential) String() string { return "Credential(***)" }
 ```
 
+```python
+@dataclass(frozen=True)
+class ApiCredential:
+    key: str
+    secret: str
+
+    def __repr__(self) -> str: return "ApiCredential(key=***, secret=***)"
+    __str__ = __repr__
+```
+
 - Mask these headers in all log output: `Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `Proxy-Authorization`.
 - Never log request/response bodies containing tokens, passwords, or secrets. Use field-level masking.
 
@@ -107,14 +117,30 @@ func (c Credential) String() string { return "Credential(***)" }
 - Use **constant-time comparison** for secrets, tokens, and HMAC values. Never `==` or `.equals()` for secret comparison.
 
 ```kotlin
-// Good -- constant time
+// Kotlin/Java -- constant time
 MessageDigest.isEqual(expectedMac, actualMac)
 
 // Banned -- timing side-channel
 expectedMac.contentEquals(actualMac)
 ```
 
-- Generate random values with cryptographically secure PRNGs (`SecureRandom`, `crypto/rand`, `crypto.getRandomValues()`). Never `Math.random()` or `rand()` for security-sensitive values.
+```go
+// Go -- constant time
+subtle.ConstantTimeCompare(expectedMac, actualMac) == 1
+
+// Banned -- timing side-channel
+bytes.Equal(expectedMac, actualMac)
+```
+
+```python
+# Python -- constant time
+secrets.compare_digest(expected_mac, actual_mac)
+
+# Banned -- timing side-channel
+expected_mac == actual_mac
+```
+
+- Generate random values with cryptographically secure PRNGs (`SecureRandom` on JVM, `crypto/rand` in Go, `secrets` / `os.urandom` in Python, `crypto.getRandomValues()` in JS). Never `Math.random()`, `random.random()`, or `rand()` for security-sensitive values.
 
 ## HTTPS / TLS
 

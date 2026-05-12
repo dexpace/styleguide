@@ -52,7 +52,7 @@ rooms = db.query("SELECT * FROM rooms WHERE hotel_id IN (?)", hotel_ids)
   - SSL contexts
 
 ```kotlin
-// Good -- shared, configured once
+// Kotlin -- shared, configured once
 companion object {
     val mapper: ObjectMapper = jacksonObjectMapper().apply { ... }
     val httpClient: OkHttpClient = OkHttpClient.Builder().build()
@@ -63,6 +63,30 @@ fun handleRequest(req: Request): Response {
     val mapper = ObjectMapper()  // NO
     val client = OkHttpClient()  // NO
 }
+```
+
+```go
+// Go -- package-level singletons
+var (
+    httpClient = &http.Client{Timeout: 5 * time.Second}
+    isoRegex   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+)
+
+// Banned -- recompiling on every call
+func parse(s string) bool {
+    re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)  // NO
+    return re.MatchString(s)
+}
+```
+
+```python
+# Python -- module-level singletons (constructed once at import)
+_session = requests.Session()
+_iso_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# Banned -- per-call construction
+def fetch(url: str) -> Response:
+    return requests.Session().get(url)  # NO -- builds a new pool each call
 ```
 
 ## Allocation Awareness
@@ -79,7 +103,8 @@ fun handleRequest(req: Request): Response {
 - Profile before optimizing. Measure after optimizing. If you can't measure the improvement, it didn't happen.
 - Tools by platform:
   - JVM: async-profiler (flamegraphs), JFR (allocation + GC), VisualVM
-  - Go: `pprof` (CPU + memory + goroutine)
+  - Go: `pprof` (CPU + memory + goroutine), `runtime/trace`
+  - Python: `py-spy` (sampling, no instrumentation), `cProfile`, `memray` (allocation tracking), `scalene` (CPU + memory)
   - Node: `--prof`, Chrome DevTools profiler, `clinic.js`
   - General: flamegraphs, heap dumps, GC logs
 - Profile in conditions that approximate production. Profiling in dev with toy data proves nothing.
@@ -89,6 +114,7 @@ fun handleRequest(req: Request): Response {
 - Use proper benchmarking tools. Microbenchmarks without proper tooling produce noise, not data.
   - JVM: **JMH** (handles JIT warmup, dead code elimination, loop optimization)
   - Go: `testing.B` (handles iteration count, timer reset)
+  - Python: `pytest-benchmark`, `timeit` for inline microbench; `asv` for tracking over time
   - JS: `Benchmark.js` or `mitata`
 - Warm up the JIT before measuring (JVM, V8). Run enough iterations to reach steady state.
 - Report **percentiles** (p50, p95, p99), not averages. Averages hide tail latency.
@@ -136,7 +162,7 @@ if (logger.isDebugEnabled) {
 
 ## String Performance
 
-- Avoid string concatenation in loops. Use `StringBuilder` (JVM), `strings.Builder` (Go), template literals (JS), `fmt.Sprintf` (Go for complex formatting).
+- Avoid string concatenation in loops. Use `StringBuilder` (JVM), `strings.Builder` (Go), `"".join(parts)` (Python), template literals (JS), `fmt.Sprintf` (Go for complex formatting).
 
 ```kotlin
 // Good
