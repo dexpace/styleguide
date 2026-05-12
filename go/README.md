@@ -51,7 +51,7 @@ Go is closest to the Zig/Elixir ideal: no inheritance, no classes, no exceptions
 1. **Structs + functions, no objects.** Structs hold data. Functions operate on data. Interfaces define behavior contracts. No inheritance, no method overriding.
 2. **Errors are values -- handle every one.** No discarding errors with `_`. Every error is wrapped with context and propagated.
 3. **Explicit over implicit.** No `init()` side effects. No global state. No magic. Dependencies are parameters.
-4. **Immutable by default.** Return new values over mutating. Unexported fields with exported getters.
+4. **Immutable by default.** Return new values over mutating. Use exported fields when the zero value is meaningful and direct access is fine — this is the Go default (`http.Request.URL`, `http.Request.Method`). Reach for an unexported field + accessor only when you need to enforce an invariant, hide a computation, or keep the public API stable across internal changes. Accessors don't take a `Get` prefix — see [naming conventions §Getters and Setters](./02-naming-conventions.md).
 5. **Accept interfaces, return structs.** Narrowest interface in, concrete type out. Interfaces are discovered, not designed upfront.
 6. **Transform, don't mutate.** Process data through function pipelines. Each function takes input, returns new output.
 7. **Always say why.** Comments explain reasoning, not mechanics.

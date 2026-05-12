@@ -30,14 +30,17 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 4. **Anti-pattern:** sprinkling `@JvmOverloads` on every default-arg function. Apply only where Java/reflection callers exist.
 5. Verify with `javap -p`. The generated overloads should be exactly what you expect.
 
-### 1.3 — `@JvmField` for exposing properties as Java fields.
+### 1.3 — `@JvmField` is a limited tool, not a default. Reach for it only when Java demands a field.
 
 **Reasoning, step by step:**
-1. A Kotlin `val name: String` compiles to a private field + `getName()` getter. Java sees `obj.getName()`, not `obj.name`.
-2. `@JvmField val name: String` exposes the underlying field. Java sees `obj.name`. No getter generated.
-3. Use for: framework reflection that wants public fields (some serializers, some DI), `companion object` constants that should appear as fields.
-4. Trade-off: `@JvmField` loses the property abstraction. No custom getter, no Kotlin properties machinery. Worth it only when the Java-side ergonomics demand it.
-5. Inside `companion object`: pair with `@JvmField` for constant access, or with `@JvmStatic` if you want a method-shaped accessor.
+1. A Kotlin `val name: String` already does the right thing for Java callers: it compiles to a private field + a `getName()` getter, which Java calls as `obj.getName()`. **That's the idiomatic shape.** Don't reflexively `@JvmField` to make Java code look "nicer" — `obj.getName()` is exactly what Java code is supposed to look like.
+2. `@JvmField val name: String` *replaces* the getter with a public field. Java sees `obj.name`. The cost: you've removed the property abstraction. No future custom getter. No `val` → `var` migration without breaking every Java caller. No `lateinit`. No `open`. No delegation. No `@Volatile` semantics. You traded a one-time syntactic win for permanent inflexibility.
+3. **Legitimate uses** (all driven by something on the Java side requiring a real field):
+   - A serializer / DI framework that reads public fields by reflection and doesn't follow getters.
+   - A framework annotation that targets fields (`@JvmField @Volatile var ...` to satisfy a memory-model contract).
+   - Performance-critical hot paths where the getter call is measurably the bottleneck (rare).
+4. **Anti-pattern:** `@JvmField` on every property of a data class for "interop." Default Kotlin properties + generated getters work fine for Java.
+5. Inside `companion object`: `@JvmField` exposes a constant as a static *field* (`MyClass.CONSTANT` from Java instead of `MyClass.Companion.getCONSTANT()`). `@JvmStatic` exposes a method as a static method. Pick by whether the Java side reads a field or calls a method.
 
 ### 1.4 — `@JvmName` to give Kotlin and Java distinct names for the same function.
 
@@ -95,13 +98,17 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 3. **Rule:** don't expose `internal` symbols to Java. If a Java caller needs it, make it `public` and document the contract; if it's truly module-private, keep Java out.
 4. Cross-module Java callers cannot call `internal` Kotlin code. That's the whole point.
 
-### 1.10 — `JvmDefault` and interface methods: prefer `-Xjvm-default=all`.
+### 1.10 — Interface default methods: `-Xjvm-default=all` for new modules, `all-compatibility` for published libraries.
 
 **Reasoning, step by step:**
-1. Kotlin interfaces can have default method bodies. Without configuration, these are compiled as Java *static* methods plus delegating implementations in every implementing class.
-2. `-Xjvm-default=all` (or `all-compatibility`) makes them proper Java 8+ default methods — Java implementers don't have to re-implement.
-3. Apply at the *module* level (in `compileOptions.freeCompilerArgs`). Don't sprinkle `@JvmDefault` (deprecated in favor of the compiler flag).
-4. ABI consequence: `-Xjvm-default=all` changes the bytecode shape of every interface. Pick `all-compatibility` if you're publishing a library; `all` for internal modules.
+1. Kotlin interfaces can have default method bodies. The compiler has three modes for emitting them:
+   - **`disable`** (legacy default): no Java default methods; bodies live in a `DefaultImpls` inner class and are copied into every implementing class. Largest bytecode footprint; Java implementers must re-implement.
+   - **`all`**: bodies compiled as proper Java 8+ default methods. Java implementers don't re-implement. ABI change vs `disable`.
+   - **`all-compatibility`**: both — default methods *and* `DefaultImpls`. Largest of the three but ABI-compatible with code compiled under `disable`.
+2. **Recommendation for new code:** `-Xjvm-default=all`. Smaller bytecode, idiomatic interop with Java 8+, the modern default for Kotlin 2.x projects.
+3. **Recommendation for published libraries** consumed by code that may have been compiled against `disable`: `all-compatibility`. The ABI compatibility shim is worth the size.
+4. Apply at the *module* level (in `compileOptions.freeCompilerArgs` or the `kotlin { compilerOptions { ... } }` DSL). Don't sprinkle `@JvmDefault` annotations — those were deprecated in favor of the compiler flag.
+5. Verify with `javap` on a representative interface after a build to confirm default methods are present.
 
 ### 1.11 — Constructors with default args + Spring/JPA: pair with `@JvmOverloads` and the compiler plugin.
 

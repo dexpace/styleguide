@@ -60,7 +60,7 @@ Kotlin gives you both worlds: data classes, sealed hierarchies, immutable collec
 6. **Pick the concurrency primitive deliberately.** Coroutines for most async/cancellation-aware code. Other primitives only when the system forces it. Name the seam.
 7. **Small functions, breathing room.** Hard limit: 60 lines. Aim for 15–30. Separate logical sections with blank lines.
 8. **Assert aggressively.** `require` for caller contracts, `check` for state invariants, `error(...)` for unreachable branches. Minimum two assertions per function on average. Pair-assert when feasible.
-9. **Bound everything.** All loops, retries, queues, timeouts, coroutine scopes, and `Flow` operators with potentially-unbounded sources must have a fixed upper bound. No recursion in library code.
+9. **Bound everything.** All loops, retries, queues, timeouts, coroutine scopes, and `Flow` operators with potentially-unbounded sources must have a fixed upper bound. No unbounded recursion in library code — use `tailrec` (which the compiler rewrites to a loop) when recursion is the natural shape of the problem; otherwise iterate.
 10. **Exhaustive `when` over sealed hierarchies.** No `else` for closed sets — let the compiler tell you when a new variant breaks the world.
 11. **Compose via delegation (`by`), not inheritance.** Class delegation for decoration. Property delegation (`by lazy`, `Delegates.observable`, custom) for backing-field discipline.
 12. **Scope functions have intent — pick by purpose.** `apply` (configure, return receiver), `also` (side-effect, return receiver), `let` (transform / null-resolve, return result), `run`/`with` (group, return result). Never use one because it's familiar; choose by what should be returned.

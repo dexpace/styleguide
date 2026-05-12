@@ -45,14 +45,15 @@ These add to the 15 rules in the [generic guide root](../kotlin/README.md). When
 3. Reach for `internal` aggressively (generic guide §10.1). For modules that publish to other modules or external consumers, enforce stability with `binary-compatibility-validator` in CI.
 4. New public symbols are easier to add than to remove. Don't ship symbols you wouldn't bet your refactor on.
 
-### JVM-2. Annotate for the Java caller.
+### JVM-2. Annotate for the Java caller — when there is one.
 
 **Step-by-step reasoning:**
-1. Java callers can't pass named arguments. `fun f(a: Int = 1, b: Int = 2)` is callable from Java *only* as `f(a, b)` unless you add `@JvmOverloads`, which generates the overloads (`f()`, `f(a)`, `f(a, b)`).
-2. Companion-object methods need `@JvmStatic` to be callable as `Type.method(...)` from Java instead of `Type.Companion.method(...)`.
-3. Top-level functions live in `<FileName>Kt` from Java's view. Use `@file:JvmName("Util")` to name the class.
-4. The annotations are not decoration — they're how Java sees the contract. Missing them isn't a style issue; it's a *bug*.
-5. See [chapter 01](./01-java-interop.md) for the full matrix.
+1. Each interop annotation is a stylistic choice with real cost. Sprinkle them on every symbol and you bloat bytecode, lose abstractions (`@JvmField` strips the property), and signal that you didn't think about your callers. Omit them where they're needed and Java callers either can't call you or call you awkwardly.
+2. Java callers can't pass named arguments. `fun f(a: Int = 1, b: Int = 2)` is callable from Java *only* as `f(a, b)` unless you add `@JvmOverloads`, which generates the overloads (`f()`, `f(a)`, `f(a, b)`).
+3. Companion-object methods need `@JvmStatic` to be callable as `Type.method(...)` from Java instead of `Type.Companion.method(...)`.
+4. Top-level functions live in `<FileName>Kt` from Java's view. Use `@file:JvmName("Util")` to name the class.
+5. **The annotations are not decoration — they're how Java sees the contract. Missing them in Java-consumed code is a *bug*; adding them in pure-Kotlin code is noise.** First question: does this symbol have a Java caller (including framework reflection that emulates one — Spring, Jackson, JPA)? If yes, annotate deliberately. If no, leave them off.
+6. See [chapter 01](./01-java-interop.md) for the per-annotation guidance.
 
 ### JVM-3. Platform types are unknowns — resolve them at the boundary.
 
