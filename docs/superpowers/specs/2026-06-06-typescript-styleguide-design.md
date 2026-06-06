@@ -19,15 +19,28 @@ repo's existing guides (Tiger Style overlay, 12 root rules, kotlin/python chapte
 
 ## Values
 
-**Correctness > performance > simplicity > expressiveness (no hidden behaviour).**
+**Correctness > performance > simplicity > expressiveness — all held to one standard:
+elegant, beautiful, well-structured code.**
 
-- Correctness implies every feasible kind of testing: unit, property-based, type-level,
+- **Correctness** implies every feasible kind of testing: unit, property-based, type-level,
   mutation, component, e2e.
-- "No hidden behaviour" is root rule 2 (*explicit over implicit*) in TS terms: no `any`
-  escape hatches, no implicit coercion, no decorator/DI magic, no type-space syntax that
-  generates value-space code.
+- **Expressiveness means no hidden behaviour** — root rule 2 (*explicit over implicit*) in TS
+  terms: no `any` escape hatches, no implicit coercion, no decorator/DI magic, no type-space
+  syntax that generates value-space code.
+- **Elegance is enforced, not aspired to.** It is not a rank in the priority order; it is the
+  bar every rule is held to, made operational through concrete mechanisms: chapter exemplars
+  (see Rule format), one-level-of-abstraction functions, guard-clause shape, named pipeline
+  steps, top-down module narrative, illegal-states-unrepresentable modeling, and breathing
+  room (root rule 10). Where a rule has an enforcement hook (lint cap, compiler flag),
+  elegance is mechanical; where it cannot be (composition, naming), the guides teach it by
+  exemplar.
+- **Governing mental model: perfection over technical debt — because debt never gets paid.**
+  Root rule 12 becomes the closing rule of every README in the family. Ugly code is debt,
+  and since debt is never repaid, code must be born right: correct, fast enough, simple, and
+  beautiful on the first commit. "Later" is a lie the codebase tells itself.
 - This maps onto the root README's `correctness > performance > developer experience` and the
-  clarity hierarchy (clarity → simplicity → concision → maintainability → consistency).
+  clarity hierarchy (clarity → simplicity → concision → maintainability → consistency), with
+  consistency remaining the lowest tiebreaker.
 
 ## Architecture
 
@@ -45,9 +58,14 @@ restating them.
 | `typescript-node/` | Node.js official docs | [goldbergyoni/nodebestpractices](https://github.com/goldbergyoni/nodebestpractices) | Core guide is baseline; Node guide wins where stricter |
 | `typescript-react/` | [react.dev](https://react.dev) Rules of React (correctness, non-negotiable) | [react-typescript-style-guide.com](https://react-typescript-style-guide.com/) (conventions) | React's rules > community conventions > dexpace overlay |
 
-### Rule format (identical to kotlin/python)
+### Rule format (kotlin/python format, plus exemplars)
 
 - Chapters: `# NN — Title`. Rules: `### N.M — imperative title`.
+- **Every chapter opens with "What good looks like"** — a complete, idiomatic ~20–40-line
+  exemplar embodying the chapter's rules in concert, placed before any rule is stated. Rules
+  then dissect why the exemplar is shaped the way it is. Rationale: elegance is a property of
+  composition, and composition cannot be taught one rule at a time. This is a deliberate
+  TS-family addition to the repo format — a backport candidate for the other guides.
 - Every rule: **Reasoning, step by step** (numbered), worked good/bad examples,
   cross-references, and an enforcement note naming the compiler flag / gts / eslint rule
   where one exists.
@@ -71,6 +89,8 @@ ESLint config:
   correctness is the top value.
 - `max-lines-per-function: 70` (`skipComments: true`, blank lines counted — mirrors python's
   counting rule).
+- `max-depth: 3` (aim ≤ 2 — guard clauses and early returns keep the happy path flush left)
+  and `max-params: 3` (the options-object rule, mechanically enforced).
 - The handful of dexpace rules named in chapters (e.g. `prefer-nullish-coalescing`,
   `switch-exhaustiveness-check`), each traceable to a chapter rule.
 
@@ -95,8 +115,9 @@ fastest installs (performance).
 
 ## Decision record: erasable syntax only
 
-**Decision:** ban `enum`, `namespace`, and constructor parameter properties; enforce all three
-mechanically with the `erasableSyntaxOnly` compiler flag.
+**Decision:** ban `enum`, `namespace`, constructor parameter properties, and `import =`
+aliases; enforce all four mechanically with the `erasableSyntaxOnly` compiler flag.
+(`import =` was already dead under ESM-only; the flag makes it a compile error too.)
 
 **Reasoning:**
 1. All three are type-looking syntax that generates runtime code — "no hidden behaviour" by
@@ -132,23 +153,24 @@ language-safety chapter (kotlin: nullability; python: type-hints; TS: the type s
 | Ch | Title | Key rules and decisions |
 |---|---|---|
 | 01 | formatting-and-tooling | gts only; overlay + tsconfig as above; TS ≥ 5.8; pnpm; pre-commit `gts lint`. |
-| 02 | naming-conventions | Google casing verbatim (no `I` prefix, no underscores, CONSTANT_CASE for deep constants). Files kebab-case (ecosystem norm; case-sensitivity safe). Ports python's client verb taxonomy (get/list/create/upsert/delete/begin). No `Async` suffix (return type already says it). |
+| 02 | naming-conventions | Google casing verbatim (no `I` prefix, no underscores, CONSTANT_CASE for deep constants). Files kebab-case (ecosystem norm; case-sensitivity safe). Ports python's client verb taxonomy (get/list/create/upsert/delete/begin). No `Async` suffix (return type already says it). **Names are designed for the call site** — the audience is the reader of the caller, not the author of the callee. |
 | 03 | the-type-system | `any` banned (`unknown` + narrowing); `@ts-ignore` banned, `@ts-expect-error` only with reason in tests/bridges; `as` requires why-comment, prefer `satisfies`/guards/parse. Absence = `undefined`; `null` only where external contracts force it, converted at boundary. Custom type guards must have tests (a wrong guard is a type-system lie). Branded types for domain primitives in high-rigor modules. `readonly`/`ReadonlyArray` in public signatures. |
 | 04 | variables-and-declarations | `const` default, `let` justified, `var` banned. Non-null `!` banned outside tests/bridges — mirror of kotlin 3.2 (`!!`). `as const` for literal config. |
-| 05 | functions | **70-line hard cap** (lint-enforced), aim 10–30. Top-level `function` declarations (hoisting clarity, named stack traces); arrows for callbacks. Options object for ≥3 params or any boolean (boolean traps). `invariant(cond, msg): asserts cond` helper (~10 lines) — assertions narrow types, so runtime checks also inform the compiler. 2+ assertions per function: preconditions at entry, postconditions at exit. |
-| 06 | classes-and-data-modeling | Data = plain objects + `interface` (Google); `type` for unions/mapped/conditional. Classes only for stateful lifecycle resources; `extends` only for `Error` hierarchies. Discriminated unions are the sum type (`kind` discriminant, exhaustive `switch`, `assertNever`). `private` modifier over `#private` (Google; erasable) — `#` only when runtime privacy is required. Constructors assign only; factories hold logic; domain types validated at construction (parse, don't validate). |
-| 07 | typescript-idioms | `satisfies`; `as const`; `?.`/`??` — `\|\|` banned for defaults (`0`/`''` bug class; `prefer-nullish-coalescing`). Pipelines: `map`/`filter`/`reduce` for transforms; `for…of` for effects/early-exit; `.forEach` discouraged (can't await/break; ts.dev agrees); `for…in` banned. `Map`/`Set` over object-as-dictionary. `structuredClone` over JSON round-trip. |
+| 05 | functions | **70-line hard cap** (lint-enforced), aim 10–30. **One level of abstraction per function.** Guard clauses first; happy path flush left; early return over nesting (`max-depth: 3`, aim ≤ 2). Blank-line paragraphing (root rule 10 breathing room). **Step-down rule**: callers above callees so files read top-down — a second reason top-level `function` declarations win (hoisting makes the order legal); arrows for callbacks. Options object for ≥3 params or any boolean (boolean traps; `max-params: 3`). `invariant(cond, msg): asserts cond` helper (~10 lines) — assertions narrow types, so runtime checks also inform the compiler. 2+ assertions per function: preconditions at entry, postconditions at exit. |
+| 06 | classes-and-data-modeling | Headline: **make illegal states unrepresentable** — in the type system, elegance and correctness are the same move. Data = plain objects + `interface` (Google); `type` for unions/mapped/conditional. Classes only for stateful lifecycle resources; `extends` only for `Error` hierarchies. Discriminated unions are the sum type (`kind` discriminant, exhaustive `switch`, `assertNever`). `private` modifier over `#private` (Google; erasable) — `#` only when runtime privacy is required. Constructors assign only; factories hold logic; domain types validated at construction (parse, don't validate). |
+| 07 | typescript-idioms | `satisfies`; `as const`; `?.`/`??` — `\|\|` banned for defaults (`0`/`''` bug class; `prefer-nullish-coalescing`). Pipelines: `map`/`filter`/`reduce` for transforms; `for…of` for effects/early-exit; `.forEach` discouraged (can't await/break; ts.dev agrees); `for…in` banned. `Map`/`Set` over object-as-dictionary. `structuredClone` over JSON round-trip. **Pipeline shape: name the steps** — chains beyond ~3 stages get named intermediate `const`s; concision serves clarity, never the reverse (no clever one-liners). |
 | 08 | error-handling | `Error` subclasses per domain; `cause` chaining mandatory on rethrow + context fields (correlation ID) — the wrap-with-context analog. `catch (e: unknown)` + narrow; no swallowing. Result pattern: hand-rolled ~10-line discriminated union, **opt-in per module, no mixing** (ports python §8.11; no library dep). Programmer errors → `invariant` (crash fast); operational errors → typed errors (handled). |
 | 09 | concurrency | async/await only. **`no-floating-promises` is the flagship rule** (await, return, or explicit `void` with comment). AbortSignal threaded through long async APIs; `AbortSignal.timeout()` mandatory on external I/O (ports python asyncio.timeout). Bounded fan-out: `Promise.all` over serial awaits, concurrency-limited via ~15-line semaphore. Interleaving races documented: check-then-act across `await` is a race. |
-| 10 | api-design | Named exports only; `index.ts` is the contract (deep imports blocked via `exports` field — node guide). Accept interfaces, return concrete. Options with documented defaults (root rule 2 carve-out). zod at every external boundary; `z.infer` is the single source of truth for external-data types. `@deprecated` + semver. |
+| 10 | api-design | Named exports only; `index.ts` is the contract (deep imports blocked via `exports` field — node guide). Accept interfaces, return concrete. Options with documented defaults (root rule 2 carve-out). zod at every external boundary; `z.infer` is the single source of truth for external-data types. `@deprecated` + semver. **API symmetry**: parallel operations share vocabulary and shape — list/get/create read as a family. |
 | 11 | testing | **Vitest**; colocated `*.test.ts`; integration/e2e under `tests/`. Mandated: unit; property-based (fast-check) for codecs/parsers/invariant-bearing functions; type-level (`expectTypeOf`) for public generics and conditional types (type regressions are invisible to runtime tests). Recommended: Stryker mutation testing, nightly CI (honest metric; no coverage-% fetish). Fakes over mocks for owned code; MSW for HTTP. Determinism: fake timers, seeded fast-check (log seeds), no real network/clock/fs in unit tests. |
-| 12 | module-organization | ESM only (`"type": "module"`); `import type` discipline (enforced by `verbatimModuleSyntax`). Feature folders over kind folders. Barrels only at package boundary; internal barrels banned (cycles, bundle cost). Cycles: `madge --circular` in CI (keeps "gts only" honest — no extra lint plugins). Module side effects banned (`sideEffects: false`). |
+| 12 | module-organization | ESM only (`"type": "module"`); `import type` discipline (enforced by `verbatimModuleSyntax`). Feature folders over kind folders. Barrels only at package boundary; internal barrels banned (cycles, bundle cost). Cycles: `madge --circular` in CI (keeps "gts only" honest — no extra lint plugins). Module side effects banned (`sideEffects: false`). **A module reads top-down as a story**: public API first, helpers below; one concept per file; ~300-line soft cap signals a split. |
 | 13 | resource-management | `using` / `await using` mandated for disposables; implement `Symbol.dispose` on owned resources — the `use{}`/`with` analog. AbortController as universal lifecycle handle (`addEventListener(..., {signal})` unifies cleanup and cancellation). Bounded pools/queues/caches (LRU + TTL; ports performance.md). |
 | 14 | documentation | TSDoc; never restate types in prose (Google); why-comments (root rule 7); `@example` on non-obvious publics. |
 | 15 | performance | V8 mental model: monomorphism (stable shapes — `interface` discipline buys this), no `delete`, no sparse arrays. Allocation hygiene in hot paths. Serial-await elimination (cross-ref 09). `vitest bench` micro; `--cpu-prof` real profiles; measure first; network > disk > memory > CPU (ports performance.md). |
 
-README: authority chain, chapter index, the 12 root rules restated TS-natively, deviations
-ledger.
+README: authority chain, chapter index, values statement (the four values + the elegance
+standard), the 12 root rules restated TS-natively, deviations ledger, and the zero-debt
+closing rule ("perfection over technical debt — debt never gets paid").
 
 ## `typescript-node/` — 8 chapters
 
@@ -175,7 +197,7 @@ configuration.
 | Ch | Title | Key rules and decisions |
 |---|---|---|
 | 01 | components-and-props | Function components only. `interface XProps`. **No `React.FC`** (implicit-children legacy, worse inference). Class components only via `react-error-boundary`. Composition (children/slots) over boolean-config props. |
-| 02 | hooks | `eslint-plugin-react-hooks` added to the react overlay (justified: Rules of React are correctness, not style; includes React Compiler lint). `exhaustive-deps` as error. Effects synchronize with external systems only (react.dev canon: you might not need an effect). Custom hooks `use`-prefixed. Fetch effects take AbortSignal (cross-ref core 09/13). |
+| 02 | hooks | `eslint-plugin-react-hooks` v6 `recommended` added to the react overlay (justified: Rules of React are correctness, not style; v6 bundles React Compiler-powered rules — `purity`, `immutability`, `set-state-in-render`, `set-state-in-effect`, `refs`). `exhaustive-deps` as error. Effects synchronize with external systems only (react.dev canon: you might not need an effect). Custom hooks `use`-prefixed. Fetch effects take AbortSignal (cross-ref core 09/13). |
 | 03 | state-management | Local-first `useState`; lift minimally. Discriminated-union state over boolean soup (`status: 'idle' \| 'loading' \| 'error'` — illegal states unrepresentable). **TanStack Query for server state** (it's a cache, not state). Context for static DI; Zustand only for genuinely global dynamic state; no Redux in new code. |
 | 04 | data-fetching-and-forms | TanStack Query conventions (queryKey factories; zod-parse every response at the boundary — core 10). react-hook-form + zod resolver (one schema = validation + types). Error boundaries per route. |
 | 05 | structure-and-routing | Ports upstream's feature folders (`features/x/` with colocated hooks/components/queries; `common/` only when shared). PascalCase component files; camelCase folders (upstream convention). No cross-feature imports except via `common/`. One styling system per project; runtime CSS-in-JS discouraged (perf); Tailwind or CSS Modules acceptable. GraphQL chapter **not adopted** (no dexpace GraphQL; ledger entry for revisit). |
@@ -221,6 +243,14 @@ consistency per commit).
 - typescript-deno/, typescript-bun/ runtime guides.
 - Monorepo tooling guidance (nx/turborepo) — revisit if dexpace adopts a monorepo.
 - CI pipeline definitions (the guides name the checks; wiring them is per-project).
+
+## Verification
+
+Technical claims checked 2026-06-06 against primary sources: TypeScript 5.8 release notes
+(`erasableSyntaxOnly` bans enums, runtime namespaces, parameter properties, and `import =`
+aliases), the gts v7 README (flat-config extension path, `tsconfig-google.json` base), and
+eslint-plugin-react-hooks v6 docs (React Compiler-powered rules ship in the `recommended`
+preset; the linter does not require the compiler installed).
 
 ## Open questions
 
