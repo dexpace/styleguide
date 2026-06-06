@@ -49,6 +49,7 @@ Each guide adapts the cross-cutting rules to a specific language, names its cano
 | Kotlin on JVM | [`kotlin-jvm/`](./kotlin-jvm/) | Extends `kotlin/`; defers to Kotlin coding conventions + Spring/Jackson/SLF4J ecosystem norms | Java interop annotations, Spring/Ktor wiring, JPA, Loom vs coroutines, Jackson at boundaries. |
 | Python | [`python/`](./python/) | [PEP 8](https://peps.python.org/pep-0008/) + [PEP 20](https://peps.python.org/pep-0020/) + [PEP 484/604](https://peps.python.org/pep-0484/) | Python 3.12+. Type hints + mypy strict, dataclasses + Protocols, asyncio with `TaskGroup`, Ruff for lint + format. |
 | TypeScript | [`typescript/`](./typescript/) | [Google TS Style Guide](https://google.github.io/styleguide/tsguide.html) + [ts.dev/style](https://ts.dev/style/) | TS 5.8+, erasable syntax only, gts toolchain + type-aware overlay, Vitest + fast-check + expectTypeOf, zod at boundaries. |
+| TypeScript on Node | [`typescript-node/`](./typescript-node/) | Extends `typescript/`; Node.js docs + community best practices | Node ≥ 24 LTS, Fastify, Drizzle, pino, crash-only, event-loop budget. |
 
 Each guide is split into topic files (formatting, naming, error handling, concurrency, API design, testing, etc.). Read the guide's `README.md` for the index.
 
