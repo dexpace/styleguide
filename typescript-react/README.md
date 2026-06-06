@@ -20,10 +20,10 @@ The core [typescript/](../typescript/) authority chain (Google → ts.dev → gt
 
 | # | Document | Scope |
 |---|----------|-------|
-| 01 | [Components & Props](./01-components-and-props.md) | Function components, props typed as interfaces, no `React.FC`, children/slots, one component per file |
+| 01 | [Components & Props](./01-components-and-props.md) | Function components, props typed as interfaces, no `React.FC`, `ref` as a prop (not `forwardRef`), children/slots, one component per file |
 | 02 | [Hooks](./02-hooks.md) | Rules of Hooks, custom hooks as the unit of reuse, dependency correctness, `useRef` vs `useState`, stable identities |
-| 03 | [State Management](./03-state-management.md) | Server state in TanStack Query, client state in `useState`/`useReducer`, context for wiring not data, per-domain Zustand for global dynamic state, no god-store, no Redux |
-| 04 | [Data Fetching & Forms](./04-data-fetching-and-forms.md) | Queries and mutations, cache invalidation, optimistic updates, react-hook-form + zod resolvers, validation at the edge |
+| 03 | [State Management](./03-state-management.md) | Server state in TanStack Query, client state in `useState`/`useReducer`, `<Context value>` for wiring not data, per-domain Zustand for global dynamic state, no god-store, no Redux |
+| 04 | [Data Fetching & Forms](./04-data-fetching-and-forms.md) | Queries and mutations, cache invalidation, optimistic updates with `useOptimistic`, form Actions + `useActionState`, react-hook-form + zod for complex validation, validation at the edge |
 | 05 | [Structure & Routing](./05-structure-and-routing.md) | Feature folders, route-level code splitting, query over router loaders, colocated UI, no barrels below the package root |
 | 06 | [Testing React](./06-testing-react.md) | Testing Library, role-based queries, user-event over fireEvent, MSW for the network, behaviour over implementation |
 | 07 | [Accessibility](./07-accessibility.md) | Semantic HTML first, ARIA only to fill gaps, keyboard reachability, focus management, `eslint-plugin-jsx-a11y` |
@@ -94,6 +94,7 @@ This guide takes React's Rules of React as canonical and the community style gui
 | GraphQL conventions | The community guide ships a GraphQL chapter | Not adopted | There is no dexpace GraphQL surface; our data layer is TanStack Query over typed HTTP (REACT-3). Revisit if GraphQL is adopted. |
 | `React.FC` | Tolerated in places upstream | Banned — type props as an explicit interface parameter | Worse inference for generic components, plus the legacy implicit-`children` it drags in. See [01-components-and-props.md](./01-components-and-props.md). |
 | File naming | Core guide names files kebab-case (core [2.4](../typescript/02-naming-conventions.md)) | React PascalCase component files, camelCase others | A component file's name is its import name and React components are PascalCase symbols, so the file matches. See [05-structure-and-routing.md](./05-structure-and-routing.md). |
+| Component-test runner | Family default is `bun test` (core [11.1](../typescript/11-testing.md)) | Vitest + MSW for component tests | `bun test` runs no Service-Worker/network interception, so MSW (6.3) cannot route requests, and its DOM/jsdom story is still immature for Testing Library. This is the React counter-substitution to [typescript-bun](../typescript-bun/)'s runtime ledger. Playwright is unchanged. Revisit when `bun test` closes the MSW and DOM gap. See [06-testing-react.md](./06-testing-react.md). |
 
 ---
 

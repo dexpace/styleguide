@@ -1,6 +1,6 @@
 # 06 — Logging
 
-Logs are the only witness to what a service did at 3am when no one was watching. On Node, that witness has to survive a single-threaded event loop, an async call graph that loses thread-locals at every `await`, and an aggregator that ingests JSON, not prose. This chapter binds logging to pino, carries request context through `AsyncLocalStorage` (the MDC analog the JVM guide reaches for), redacts PII and secrets at the logger rather than the call site, and writes one line per request outcome at the boundary. It is the Node port of [kotlin-jvm/06-logging.md](../kotlin-jvm/06-logging.md): MDC becomes `AsyncLocalStorage`, the masking config becomes pino `redact`.
+Logs are the only witness to what a service did at 3am when no one was watching. On Bun, that witness has to survive a single-threaded event loop, an async call graph that loses thread-locals at every `await`, and an aggregator that ingests JSON, not prose. This chapter binds logging to pino, carries request context through `AsyncLocalStorage` (the MDC analog the JVM guide reaches for), redacts PII and secrets at the logger rather than the call site, and writes one line per request outcome at the boundary. It is the Bun port of [kotlin-jvm/06-logging.md](../kotlin-jvm/06-logging.md): MDC becomes `AsyncLocalStorage`, the masking config becomes pino `redact`.
 
 ## What good looks like
 
@@ -19,6 +19,7 @@ const root = pino({
     'req.headers.authorization', 'req.headers.cookie', 'req.headers["x-api-key"]',
     '*.password', '*.token', '*.secret', '*.cardNumber', '*.pan',
   ],
+  // No `transport` key: base pino writes NDJSON straight to stdout, the Bun-safe shape (6.1).
   // Pretty-printing is a dev-terminal transport, set outside the app via `pino-pretty`; prod emits JSON.
 });
 
@@ -47,30 +48,30 @@ export async function handleCharge(req: ChargeRequest): Promise<Response> {
 }
 ```
 
-This is structured JSON through pino (6.1); `AsyncLocalStorage` carries `correlationId` and `principal` across every `await` without a parameter (6.2); `redact` masks headers and secret fields at the logger (6.3); the inner `chargeCard` enriches via `cause` and the boundary writes exactly one outcome line (6.4, porting [../typescript/08-error-handling.md](../typescript/08-error-handling.md) §8.5); the levels are deliberate — `info` for the state transition, `error` only because it pages (6.5).
+This is structured JSON through pino, running on Bun with no transport so the writes stay on the Bun-safe path (6.1); `AsyncLocalStorage` carries `correlationId` and `principal` across every `await` without a parameter (6.2); `redact` masks headers and secret fields at the logger (6.3); the inner `chargeCard` enriches via `cause` and the boundary writes exactly one outcome line (6.4, porting [../typescript/08-error-handling.md](../typescript/08-error-handling.md) §8.5); the levels are deliberate — `info` for the state transition, `error` only because it pages (6.5).
 
 ## Rules
 
-### 6.1 — pino, structured JSON. Logs are data first.
+### 6.1 — pino on Bun, structured JSON. Logs are data first.
 
 **Reasoning, step by step:**
 1. A log line is consumed by a machine — an aggregator that indexes, filters, and alerts on fields — before any human reads it. Free-form strings (`` `charged ${amount} for ${user}` ``) force that machine to parse prose back into fields, badly. Emit the fields directly: `log().info({ amount, userId }, 'charge completed')`.
-2. pino is the Node baseline and the one logger the [overlay README](./README.md) names: structured JSON by design, low overhead because it serializes outside the hot path. Use it; do not wrap `console` or pull a second logging library. The message string is the stable, low-cardinality event name and the variable data goes in the object — that split is what lets you alert on `msg: "charge failed"` regardless of which user it failed for.
-3. Pretty-printing is a *development-terminal transport*, never a production config. Pipe through `pino-pretty` in the terminal or wire it as a transport gated on `NODE_ENV`; the application itself always emits JSON so prod and the aggregator agree on shape.
+2. pino is the baseline and the one logger the [overlay README](./README.md) names: structured JSON by design, low overhead because it serializes outside the hot path. It runs on Bun — Bun's `node:` compatibility covers the surface pino's core needs, and the base logger writes newline-delimited JSON straight to stdout with no worker thread. Use it; do not wrap `console` or pull a second logging library. The message string is the stable, low-cardinality event name and the variable data goes in the object — that split is what lets you alert on `msg: "charge failed"` regardless of which user it failed for.
+3. The caveat is transports. pino's `transport` option (and `pino-pretty` when wired in-process) spawns a `worker_thread` to do the formatting off the main loop, and Bun's `worker_threads` support is partial — `Worker` exists but without `stdin`/`stdout`/`stderr` wiring and with documented gaps, exactly the surface a transport leans on. So on Bun do not configure an in-process transport in production. The recorded fallback holds either way, and is the default: configure **no** `transport` key. Base pino then emits the same JSON, the same fields, to stdout, and the platform's log collector (the container runtime, the sidecar, `bun run … | pino-pretty` in a dev terminal) ships and formats it out of process — where formatting belongs regardless of runtime. Gate pretty-printing on the environment outside the app; the application itself always emits JSON so prod and the aggregator agree on shape.
 
 ```ts
 log().info({ orderId, itemCount }, 'order placed');             // good — event name stable, data structured
 log().info(`order ${orderId} placed with ${itemCount} items`); // bad — data melted into prose, unindexable
 ```
 
-**Enforcement:** review; pino as the only logging dependency; message strings are constant, data is the object argument.
+**Enforcement:** review; pino as the only logging dependency; no in-process `transport` configured (base JSON to stdout, collector ships it); message strings are constant, data is the object argument.
 
 ### 6.2 — `AsyncLocalStorage` carries request context.
 
 **Reasoning, step by step:**
 1. Every log line for a request needs the same cross-cutting context: a correlation id, the principal, the tenant. Threading a `logger` or `ctx` parameter through every function to achieve that pollutes signatures all the way down and breaks the moment one layer forgets to pass it.
-2. `AsyncLocalStorage` from `node:async_hooks` is Node's answer, and the direct analog of SLF4J's MDC in [kotlin-jvm/06-logging.md](../kotlin-jvm/06-logging.md) §6.6. Where the JVM bridges MDC across coroutine suspensions with `MDCContext`, Node's `AsyncLocalStorage` follows the async call graph across every `await`, timer, and microtask without bridging — the store set before an `await` is the store seen after it.
-3. Bind the store once at the boundary with `runWithRequestContext(ctx, fn)` and read it through a `log()` accessor that does `root.child(store.getStore())`. Correlation id and principal then appear on every line in that request's async subtree, no parameter passed. Use `store.run` to scope it; never `enterWith` mid-handler, which leaks the context into whatever runs next on the loop.
+2. `AsyncLocalStorage` from `node:async_hooks` is the answer, and the direct analog of SLF4J's MDC in [kotlin-jvm/06-logging.md](../kotlin-jvm/06-logging.md) §6.6. Bun ships it through its `node:async_hooks` compatibility, and it works for this pattern: the store follows the async call graph across every `await`, timer, and microtask — the store set before an `await` is the store seen after it. Where the JVM bridges MDC across coroutine suspensions with `MDCContext`, here no bridging is needed.
+3. Bind the store once at the boundary with `runWithRequestContext(ctx, fn)` and read it through a `log()` accessor that does `root.child(store.getStore())`. Correlation id and principal then appear on every line in that request's async subtree, no parameter passed. The canonical context key is `correlationId` — one name in the store, the child logger, and every line, so a trace joins downstream without reconciling synonyms ([03 §3.6](./03-http-services.md) mints it at the edge). Use `store.run` to scope it; never `enterWith` mid-handler, which leaks the context into whatever runs next on the loop.
 
 ```ts
 app.use((req, _res, next) => runWithRequestContext({ correlationId: req.id, principal: req.user?.id }, next));
@@ -82,7 +83,7 @@ log().warn({ retries }, 'gateway slow, retrying'); // 12 frames deep, no logger 
 ### 6.3 — `redact` paths for PII and secrets at the logger.
 
 **Reasoning, step by step:**
-1. Masking that depends on every call site remembering to strip a field will fail the one time it matters — a new endpoint logs the raw request, and a password is in the aggregator forever. Masking is *configuration*, declared once where the logger is built, not discipline repeated at hundreds of call sites. This is the Node port of the masking rules in [security.md](../security.md); see them for the full forbidden-field policy.
+1. Masking that depends on every call site remembering to strip a field will fail the one time it matters — a new endpoint logs the raw request, and a password is in the aggregator forever. Masking is *configuration*, declared once where the logger is built, not discipline repeated at hundreds of call sites. This is the Bun port of the masking rules in [security.md](../security.md); see them for the full forbidden-field policy.
 2. pino's `redact` option takes a list of paths and replaces matching values with `[Redacted]` before serialization. Configure the canonical set on the base logger so it applies to every child and every line, including objects you logged without realizing they held a secret.
 3. The canonical paths cover the headers and fields [security.md](../security.md) names. List them explicitly — authorization, cookie, set-cookie, x-api-key, and proxy-authorization headers, plus the secret-bearing body fields:
 ```ts
@@ -126,15 +127,15 @@ log().error({ err }, 'gateway unreachable, giving up'); // page-worthy: handling
 ### 6.6 — `console.*` is banned in server code.
 
 **Reasoning, step by step:**
-1. `console.log` and its siblings are everything a server log must not be: unstructured (a string, not indexable fields), unleveled (no `error`/`warn`/`info` to route on), uncorrelated (no request context), and written sync-ish to stdout — a blocking write on the single thread (6.1, [overlay §NODE-2](./README.md)). It bypasses pino's redaction (6.3) entirely, so `console.log(req.body)` leaks whatever the body holds.
-2. Diagnostics go through the `log()` accessor so they inherit structure, level, correlation, and redaction. There is no server-code case where `console` is right; the one narrow exception is a CLI's *intended program output* to stdout — data the user asked for, not a diagnostic — and even there diagnostics use the logger. The ban is mechanical, not a matter of remembering: this guide extends the core ESLint overlay (which carries only the three caps, [../typescript/01-formatting-and-tooling.md](../typescript/01-formatting-and-tooling.md) §1.6) with `'no-console': 'error'` for server packages — the same way the React overlay layers its plugins on the core config — so a `console.*` call fails lint and never reaches review.
+1. `console.log` and its siblings are everything a server log must not be: unstructured (a string, not indexable fields), unleveled (no `error`/`warn`/`info` to route on), uncorrelated (no request context), and written sync-ish to stdout — a blocking write on the single thread (6.1, [overlay §BUN-2](./README.md)). It bypasses pino's redaction (6.3) entirely, so `console.log(req.body)` leaks whatever the body holds.
+2. Diagnostics go through the `log()` accessor so they inherit structure, level, correlation, and redaction. There is no server-code case where `console` is right; the one narrow exception is a CLI's *intended program output* to stdout — data the user asked for, not a diagnostic — and even there diagnostics use the logger. The ban is mechanical, not a matter of remembering: this Bun overlay carries the `'no-console': 'error'` rule on top of the core ESLint overlay (which carries only the three caps, [../typescript/01-formatting-and-tooling.md](../typescript/01-formatting-and-tooling.md) §1.7-§1.8) for server packages — the same way the React overlay layers its plugins on the core config — so a `console.*` call fails lint and never reaches review.
 
 ```ts
 console.log('charging', req.body);                 // banned — unstructured, uncorrelated, unredacted
 log().info({ amount: req.amount }, 'charging');    // correct
 ```
 
-**Enforcement:** `no-console` added by this guide on top of the core ESLint overlay (§1.6) for server packages; CI fails on any `console.*` in server code.
+**Enforcement:** `no-console` added by this Bun overlay on top of the core ESLint overlay for server packages; CI fails on any `console.*` in server code.
 
 ### 6.7 — Child loggers per component.
 

@@ -47,7 +47,7 @@ The fast version keeps `PricePoint` shape-stable so V8 keeps `set` monomorphic (
 ### 15.2 — Keep object shapes stable so V8 stays monomorphic.
 
 **Reasoning, step by step:**
-1. V8 assigns every object a hidden class (a "shape") from its properties, their order, and their types. A property access or call that only ever sees one shape is *monomorphic* and compiles to a direct offset load. Two shapes make it polymorphic; many make it megamorphic and fall back to a hash lookup. Types count too: a field that holds an integer then a float forces a re-tag.
+1. V8 assigns every object a hidden class (a "shape") from its properties, their order, and their types. A property access or call that only ever sees one shape is *monomorphic* and compiles to a direct offset load. Two shapes make it polymorphic; many make it megamorphic and fall back to a hash lookup. Types count too: a field that holds an integer then a float forces a re-tag. These are V8 specifics — on Bun (JavaScriptCore) the same instincts hold but the names and edges differ; see the Bun guide's carry table ([../typescript-bun/07-bun-performance.md](../typescript-bun/07-bun-performance.md)).
 2. Construct objects with the same properties in the same order every time. Initialize every field in one place — the literal or the constructor — rather than bolting fields on later, which forks the shape into a transition chain.
 3. This is why the `interface` discipline of chapter 06 is also a JIT strategy: one declared shape, fields assigned together, compiles to one hidden class. Plain typed objects are the fast path, not just the clean one.
 
@@ -112,11 +112,11 @@ const users = await Promise.all(ids.map(id => db.getUser(id)));
 
 **Reasoning, step by step:**
 1. Intuition about V8 is wrong roughly half the time — JIT, inlining, escape analysis, and GC interact non-locally, and "this should be faster" is a hypothesis, not a result. Capture a profile that shows the problem before, and another after. The delta is the only proof.
-2. For real workloads, run `node --cpu-prof` (or `--heap-prof` for allocations) and open the result in speedscope or Chrome DevTools. Profile production-like data; a flamegraph over toy input proves nothing about the hot path that exists.
-3. For micro-comparisons, use `vitest bench`, and state its caveats every time: it measures a function in isolation with a warm JIT, so it flatters code the optimizing compiler treats kindly and ignores the deopts a real call site triggers. Warm-up and variance make small deltas noise — trust order-of-magnitude gaps, distrust 10% ones. Keep the benchmark in the repo beside the code it guards: a committed `*.bench.ts` turns "we made this faster once" into a regression test the next refactor must beat.
+2. For real workloads, run the runtime guide's profiler — `bun:jsc` on Bun, see [../typescript-bun/07-bun-performance.md](../typescript-bun/07-bun-performance.md) — and open the result in the matching viewer. Profile production-like data; a flamegraph over toy input proves nothing about the hot path that exists.
+3. For micro-comparisons, use `mitata`, and state its caveats every time: it measures a function in isolation with a warm JIT, so it flatters code the optimizing compiler treats kindly and ignores the deopts a real call site triggers. Warm-up and variance make small deltas noise — trust order-of-magnitude gaps, distrust 10% ones. Keep the benchmark in the repo beside the code it guards: a committed `*.bench.ts` turns "we made this faster once" into a regression test the next refactor must beat.
 
 ```ts
-import {bench} from 'vitest'; // committed beside the code as a regression guard
+import {bench} from 'mitata'; // committed beside the code as a regression guard
 bench('parseFrame manual single-pass (warm-JIT, not end-to-end)', () => parseFrameFast(SAMPLE));
 bench('parseFrame pipeline baseline (warm-JIT, not end-to-end)', () => parseFramePipeline(SAMPLE));
 ```
@@ -128,7 +128,7 @@ bench('parseFrame pipeline baseline (warm-JIT, not end-to-end)', () => parseFram
 **Reasoning, step by step:**
 1. V8 represents string concatenation with *ropes* (cons-strings): `a += b` does not copy both operands into a new buffer, it allocates a small node pointing at the two pieces and flattens lazily on demand. Building up a string with `+=` in a loop is not the O(n²) catastrophe it is in languages without this optimization.
 2. The myth worth killing is "always use `Array.join` for performance." Pushing every fragment into an array and joining at the end allocates the array and its elements first; for ordinary string building it is often the same speed or slower than `+=`, and it is less readable. Reach for `join` when you genuinely have an array of parts, not as a concatenation reflex.
-3. Template literals compile to ordinary concatenation and are the default for readability: `${a}${b}` and `a + b` are the same shape to V8, so choose by clarity. And "often" is not "always": if string assembly shows up in a profile, *measure* both approaches on real data with `vitest bench` (15.6) and let the number decide. This kills a cargo-cult default; it does not install the opposite one.
+3. Template literals compile to ordinary concatenation and are the default for readability: `${a}${b}` and `a + b` are the same shape to V8, so choose by clarity. And "often" is not "always": if string assembly shows up in a profile, *measure* both approaches on real data with `mitata` (15.6) and let the number decide. This kills a cargo-cult default; it does not install the opposite one.
 
 ```ts
 let csv = '';
@@ -136,14 +136,14 @@ for (const row of rows) csv += `${row.id},${row.name}\n`; // fine — V8 ropes, 
 const header = columns.join(','); // reach for join only when you already hold an array of parts
 ```
 
-**Enforcement:** Reviewers do not demand `join` over `+=` on style grounds. A claim that either is faster on a hot path must cite a `vitest bench` result (15.6).
+**Enforcement:** Reviewers do not demand `join` over `+=` on style grounds. A claim that either is faster on a hot path must cite a `mitata` result (15.6).
 
 ### 15.8 — Treat JSON parse and stringify as the hot-path cost they are.
 
 **Reasoning, step by step:**
 1. `JSON.parse` and `JSON.stringify` are O(payload size) and run on the main thread. On a request path that handles large or frequent payloads, serialization is often a bigger line in the profile than the business logic it wraps — it is real CPU, not a free boundary.
 2. The first move is to do less of it: do not parse a body you will not read, do not stringify fields a consumer ignores, do not round-trip a value through JSON to clone it when `structuredClone` exists. The cheapest serialization is the one you skipped.
-3. At scale, a generic `JSON.stringify` walks the object reflectively every call. A schema-derived serializer specializes the work to a known shape and can be markedly faster on a hot endpoint. That belongs to the server runtime — see the forward reference in [typescript-node](../typescript-node/) chapter 07 — and like any deliberate optimization it carries a benchmark (15.6) and a ledger note (15.10), justified only by a profile that names serialization.
+3. At scale, a generic `JSON.stringify` walks the object reflectively every call. A schema-derived serializer specializes the work to a known shape and can be markedly faster on a hot endpoint. That belongs to the server runtime — see the forward reference in the [Bun performance chapter](../typescript-bun/07-bun-performance.md) — and like any deliberate optimization it carries a benchmark (15.6) and a ledger note (15.10), justified only by a profile that names serialization.
 
 ```ts
 const copy = JSON.parse(JSON.stringify(config)); // bad — round-trip through JSON to deep-clone
@@ -186,4 +186,4 @@ const point: PricePoint = {symbol, bid: raw.bid, ask: raw.stale ? 0 : raw.ask}; 
 - The `interface` discipline that compiles to one hidden class, branded primitives, and tested guards: [03-the-type-system.md](./03-the-type-system.md). Stable shapes for derived literals and the banned non-null `!`: [04-variables-and-declarations.md](./04-variables-and-declarations.md).
 - Small functions and bounded loops the JIT inlines: [05-functions.md](./05-functions.md). Plain typed objects + free functions as the monomorphic default, discriminated unions: [06-classes-and-data-modeling.md](./06-classes-and-data-modeling.md). `Map`/`Set` over object-as-hashmap, pipeline allocation costs, `structuredClone`: [07-typescript-idioms.md](./07-typescript-idioms.md).
 - Batched fan-out (9.8) and the bounded-concurrency worker pool behind rule 15.5: [09-concurrency.md](./09-concurrency.md). Named exports as a tree-shaking precondition: [10-api-design.md](./10-api-design.md). The testing discipline a committed `*.bench.ts` (15.6) inherits — determinism and colocation beside the code: [11-testing.md](./11-testing.md).
-- `"sideEffects": false` and no import-time work (12.6): [12-module-organization.md](./12-module-organization.md). Bounded pools, caches, and buffer reuse on hot paths: [13-resource-management.md](./13-resource-management.md). Schema-derived serializers and runtime profiling: [typescript-node](../typescript-node/) chapter 07. Design-phase doctrine (the resource hierarchy, batching, caching, pooling), canonical for all of the above: [../performance.md](../performance.md).
+- `"sideEffects": false` and no import-time work (12.6): [12-module-organization.md](./12-module-organization.md). Bounded pools, caches, and buffer reuse on hot paths: [13-resource-management.md](./13-resource-management.md). Schema-derived serializers and runtime profiling: [Bun performance chapter](../typescript-bun/07-bun-performance.md). Design-phase doctrine (the resource hierarchy, batching, caching, pooling), canonical for all of the above: [../performance.md](../performance.md).

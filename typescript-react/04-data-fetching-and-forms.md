@@ -1,6 +1,6 @@
 # 04 — Data Fetching and Forms
 
-The two places a React app meets the outside world: reading server state, and writing user input back. Both are external-system boundaries, and the discipline is the core guide's at every wire edge — parse the `unknown`, type from the schema, thread the signal, name the failure. This chapter routes all server reads and writes through TanStack Query (REACT-3) and all form input through react-hook-form, so caching, cancellation, invalidation, and validation are framework concerns, not per-component improvisation — REACT-3, server state is not client state, made operational. The zod boundary ([core 10.7](../typescript/10-api-design.md)), signal-threaded cancellation ([core 9.5](../typescript/09-concurrency.md)), and the view-union from state management ([03.2](./03-state-management.md)) are the raw material; here they compose into the data layer.
+The two places a React app meets the outside world: reading server state, and writing user input back. Both are external-system boundaries, and the discipline is the core guide's at every wire edge — parse the `unknown`, type from the schema, thread the signal, name the failure. This chapter routes all server reads and writes through TanStack Query (REACT-3), drives mutation-shaped forms with React 19's form Actions and `useActionState`, and reaches for react-hook-form on the rich multi-field validation surfaces — so caching, cancellation, invalidation, pending state, and validation are framework and platform concerns, not per-component improvisation — REACT-3, server state is not client state, made operational. The zod boundary ([core 10.7](../typescript/10-api-design.md)), signal-threaded cancellation ([core 9.5](../typescript/09-concurrency.md)), and the view-union from state management ([03.2](./03-state-management.md)) are the raw material; here they compose into the data layer.
 
 ## What good looks like
 
@@ -25,25 +25,30 @@ export const useBooking = (id: BookingId) =>
     },
   });
 
-// RebookForm.tsx — the form that drives a rebook mutation.
+// RebookForm.tsx — a mutation-shaped form: a React 19 Action drives the rebook.
 export function RebookForm({id}: {readonly id: BookingId}) {
   const qc = useQueryClient();
   const rebook = useMutation({
     mutationFn: (input: RebookInput) => postRebook(id, input),
     onSuccess: () => qc.invalidateQueries({queryKey: bookingKeys.detail(id)}), // 4.4 declared scope
   });
-  const {register, handleSubmit, formState} = useForm<RebookInput>({resolver: zodResolver(RebookSchema)});
+  const [state, formAction, isPending] = useActionState(async (_prev: {error?: string}, data: FormData) => {
+    const parsed = RebookSchema.safeParse({seats: Number(data.get('seats'))}); // 4.6 same schema parses input
+    if (!parsed.success) return {error: parsed.error.issues[0]?.message};
+    await rebook.mutateAsync(parsed.data);                     // 4.4 invalidation fires on success
+    return {};
+  }, {});
   return (
-    <form onSubmit={handleSubmit((values) => rebook.mutate(values))}>
-      <input type="number" {...register('seats', {valueAsNumber: true})} />  {/* 4.6 uncontrolled */}
-      {formState.errors.seats && <p role="alert">{formState.errors.seats.message}</p>}
-      <button disabled={rebook.isPending}>Rebook</button>      {/* 4.8 state from the mutation */}
+    <form action={formAction}>                                 {/* 4.6 React 19 form Action */}
+      <input type="number" name="seats" />
+      {state.error && <p role="alert">{state.error}</p>}
+      <button disabled={isPending}>Rebook</button>             {/* 4.6 isPending from useActionState */}
     </form>
   );
 }
 ```
 
-The key comes from a factory, never a literal (4.1); the response is zod-parsed and the domain type is `z.infer`, not hand-written (4.2, [core 10.7](../typescript/10-api-design.md)); `signal` flows from `queryFn` into `fetch` so navigation away cancels the request (4.3, [core 9.5](../typescript/09-concurrency.md)); the mutation invalidates exactly the detail it changed (4.4); and one schema both validates the form through `zodResolver` and types its values (4.6). The button reads `isPending` from the mutation rather than a hand-rolled flag (4.8).
+The key comes from a factory, never a literal (4.1); the response is zod-parsed and the domain type is `z.infer`, not hand-written (4.2, [core 10.7](../typescript/10-api-design.md)); `signal` flows from `queryFn` into `fetch` so navigation away cancels the request (4.3, [core 9.5](../typescript/09-concurrency.md)); the mutation invalidates exactly the detail it changed (4.4). The form is a React 19 Action: `<form action={formAction}>` over `useActionState` gives `isPending` and the returned error state for free (4.6), the one `RebookSchema` parses the input there just as it does at the wire (4.2) — a rich multi-field validation UI would instead reach for react-hook-form over the same schema (4.6).
 
 ## Rules
 
@@ -99,14 +104,20 @@ onSuccess: () => qc.invalidateQueries({queryKey: bookingKeys.detail(id)}), // go
 ```
 **Enforcement:** review; every mutation declares a scoped invalidation; bare `invalidateQueries()` over the whole cache is rejected.
 
-### 4.5 — Optimistic updates must carry their rollback.
+### 4.5 — Optimistic updates carry their rollback; reach for the layer that owns the optimism.
 
 **Reasoning, step by step:**
-1. An optimistic update writes the expected result into the cache before the server confirms, so the UI feels instant. But the server can still reject — a validation failure, a conflict, a network drop — and if the cache keeps the optimistic value after a rejection, the screen now shows a change that never happened. Optimism without rollback lies to the user.
-2. So the pattern is always three-part. In `onMutate`: cancel in-flight queries for the key (so a settling refetch cannot overwrite your optimistic write), snapshot the current value with `getQueryData`, write the optimistic value, and return the snapshot as context. In `onError`: restore the snapshot from context with `setQueryData`. In `onSettled`: invalidate (4.4) so the cache reconciles with the server's truth either way.
-3. If you cannot write the rollback, do not do the optimistic update — show a pending state (4.8) and wait for the server. A non-optimistic mutation that is always correct beats an optimistic one that is sometimes a lie; reserve optimism for writes whose rollback you have actually implemented.
+1. Optimism shows the expected result before the server confirms, so the UI feels instant — but the server can still reject, and an optimistic value left standing after a rejection shows a change that never happened. The discipline is the same in both layers: the optimistic value must be undone if the write fails. Which layer you reach for depends on *what is optimistic*.
+2. For UI-local optimism — the row you just submitted appearing in a list, the name updating beside the form — lead with `useOptimistic`. It owns the *view* layer: you derive an optimistic state from the real value plus the pending action, and React reverts it automatically when the Action settles or errors, with no snapshot to manage ([react.dev: useOptimistic](https://react.dev/reference/react/useOptimistic)). The rollback is the platform's, not yours.
+3. For optimism that must persist in the *cache* — so every consumer of the query key, not just this component, sees the pending write — that lives in TanStack's `onMutate`/`onError`/`onSettled`, the cache layer's own rollback. In `onMutate`: cancel in-flight queries for the key (so a settling refetch cannot overwrite the optimistic write), snapshot the current value with `getQueryData`, write the optimistic value, and return the snapshot as context. In `onError`: restore the snapshot with `setQueryData`. In `onSettled`: invalidate (4.4) so the cache reconciles with the server's truth either way. The two are complementary, not rival: `useOptimistic` owns the component's view, `onMutate` owns the shared cache entry.
+4. If you cannot write the rollback in whichever layer you chose, do not do the optimistic update — show a pending state (4.8) and wait for the server. A non-optimistic mutation that is always correct beats an optimistic one that is sometimes a lie.
 
 ```tsx
+// view layer (useOptimistic): React reverts on settle/error — no manual snapshot (react.dev)
+const [shownName, addOptimistic] = useOptimistic(name, (_prev, next: string) => next);
+const submit = (formData: FormData) => { addOptimistic(String(formData.get('name'))); return rename.mutateAsync(formData); };
+
+// cache layer (TanStack onMutate): persists the pending write for every consumer of the key
 onMutate: async (next) => {
   await qc.cancelQueries({queryKey: bookingKeys.detail(id)});  // stop a refetch from clobbering the optimistic write
   const previous = qc.getQueryData(bookingKeys.detail(id));    // snapshot for rollback
@@ -115,20 +126,33 @@ onMutate: async (next) => {
 },
 onError: (_e, _next, ctx) => qc.setQueryData(bookingKeys.detail(id), ctx?.previous), // restore on failure
 ```
-**Enforcement:** review; any `onMutate` optimistic write has a matching `onError` rollback from snapshotted context and an `onSettled` invalidation.
+**Enforcement:** review; UI-local optimism uses `useOptimistic` (the platform reverts it); a cache-level `onMutate` optimistic write has a matching `onError` rollback from snapshotted context and an `onSettled` invalidation.
 
-### 4.6 — Forms use react-hook-form with a zodResolver over one schema.
+### 4.6 — Mutation-shaped forms use form Actions + `useActionState`; complex validation UIs use react-hook-form. One zod schema, either way.
 
 **Reasoning, step by step:**
-1. A form has two needs that usually drift apart: validating what the user typed, and typing the values your submit handler receives. Write them separately — a manual `validate` function beside a hand-written `FormValues` interface — and they disagree the moment one changes. One zod schema serves both: `zodResolver(RebookSchema)` validates, and `z.infer<typeof RebookSchema>` is the `useForm<…>` value type. Single source, no drift, identical to the wire-boundary discipline (4.2).
-2. Use uncontrolled inputs via `register`, not a `useState` per field. A controlled form re-renders the whole form on every keystroke; `register` lets the input hold its own value and react-hook-form subscribes only where needed, so typing in a thirty-field form costs one input's render, not thirty. This is the performance default; reach for `Controller` only to wrap a component library input that cannot forward a ref.
-3. Validation errors render from `formState.errors`, keyed by field, and surface to assistive tech with `role="alert"` (REACT-4, cross-ref [07 accessibility](./07-accessibility.md)). The schema's messages are the form's messages — the same `.min()`/`.email()` that guards the type produces the text the user reads — so there is no second list of error strings to maintain.
+1. The constant across both paths is the schema. A form has two needs that usually drift apart: validating what the user typed, and typing the values the submit handler receives. Write them separately — a manual `validate` beside a hand-written `FormValues` interface — and they disagree the moment one changes. One zod schema serves both: it validates, and `z.infer<typeof Schema>` is the value type. Single source, no drift, identical to the wire-boundary discipline (4.2). The schema parses the input in *both* paths below; the choice between them is about the form's UI machinery, never about whether validation is zod's job.
+2. For a mutation-shaped form — submit, await the write, show pending and error — lead with a form Action. Pass the function as `<form action={fn}>` and wrap it in `useActionState`, which returns `[state, formAction, isPending]`: the pending flag and the returned error state are built in, so there is no hand-rolled `isSubmitting` or `submitError` ([react.dev: useActionState](https://react.dev/reference/react/useActionState), [form actions](https://react.dev/blog/2024/12/05/react-19#actions)). The action receives the `FormData`, parses it with the same `Schema.safeParse`, and returns either the field errors or the result — React auto-wraps the submission in a Transition and resets the form on success.
+3. For a complex multi-field validation UI — cross-field rules, per-keystroke feedback, arrays of fields, focus-on-error — react-hook-form still out-delivers the platform. `zodResolver(Schema)` validates and `z.infer` types `useForm<…>`; uncontrolled inputs via `register` mean typing in a thirty-field form costs one input's render, not thirty (reach for `Controller` only to wrap a library input that cannot take a `ref`). This is the boundary, stated honestly: the action path owns the submit-and-mutate shape; RHF owns the rich validation surface. Both validate with the one schema.
+4. Validation errors render keyed by field and surface to assistive tech with `role="alert"` (REACT-4, cross-ref [07 accessibility](./07-accessibility.md)) — from `formState.errors` under RHF, from the action's returned `state` under `useActionState`. The schema's messages are the form's messages, so there is no second list of error strings to maintain in either path.
 
 ```tsx
-const {register, formState} = useForm<RebookInput>({resolver: zodResolver(RebookSchema)});
-<input {...register('seats', {valueAsNumber: true})} />        // uncontrolled — one render per keystroke, schema-typed
+// mutation-shaped form: form Action + useActionState — pending/error are built in (react.dev)
+const [state, formAction, isPending] = useActionState(async (_prev: FormState, data: FormData) => {
+  const parsed = RebookSchema.safeParse({seats: Number(data.get('seats'))}); // same schema parses here
+  if (!parsed.success) return {errors: z.flattenError(parsed.error).fieldErrors};
+  await postRebook(id, parsed.data);
+  return {errors: {}};
+}, {errors: {}});
+<form action={formAction}>
+  <input type="number" name="seats" />
+  {state.errors.seats && <p role="alert">{state.errors.seats[0]}</p>}
+  <button disabled={isPending}>Rebook</button>                {/* isPending from the hook, not a flag */}
+</form>
+// complex multi-field validation UI: react-hook-form over the same schema
+// const {register, formState} = useForm<RebookInput>({resolver: zodResolver(RebookSchema)});
 ```
-**Enforcement:** review; forms validate through `zodResolver` over the schema that types the values; per-field `useState` for form inputs is rejected (use `register`).
+**Enforcement:** review; mutation-shaped forms use `<form action>` + `useActionState` (pending/error from the hook, no hand-rolled flags); complex validation UIs use `zodResolver`; either way one zod schema both validates and types, and per-field `useState` for inputs is rejected.
 
 ### 4.7 — Wrap each route or feature in an error boundary.
 

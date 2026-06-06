@@ -55,7 +55,7 @@ export class UserClient {}                // good — one name, greppable, atomi
 **Reasoning, step by step:**
 1. A package needs exactly one front door. `index.ts` re-exports the public surface and nothing else; every other module is an implementation detail the package author is free to move, rename, or split without telling a single caller.
 2. The barrel re-exports only what callers need — `export {UserClient} from './user-client.js'`, `export type {User} from './user.js'`. A symbol that never appears in `index.ts` is private to the package even though TypeScript marks it `export` (the `export` is for sibling modules, not the world).
-3. Re-export at the boundary only. A barrel per feature folder, not per directory; deep barrel chains create import cycles and defeat tree-shaking ([chapter 12](./12-module-organization.md)). The hard wall — making `import 'pkg/internal/x'` fail to resolve — is the `package.json` `exports` field, which lands in the [Node guide's build chapter](../typescript-node/08-build-and-distribution.md); reference it, do not restate it here.
+3. Re-export at the boundary only. A barrel per feature folder, not per directory; deep barrel chains create import cycles and defeat tree-shaking ([chapter 12](./12-module-organization.md)). The hard wall — making `import 'pkg/internal/x'` fail to resolve — is the `package.json` `exports` field, which lands in the [Bun guide's build chapter](../typescript-bun/08-build-and-distribution.md); reference it, do not restate it here.
 
 ```ts
 // index.ts — the entire public surface, re-exported from one place
@@ -63,7 +63,7 @@ export {UserClient} from './user-client.js';
 export {UserSchema, type User} from './user.js';
 // user-client.ts imports './http-pool.js' freely; it is never re-exported, so it stays internal
 ```
-**Enforcement:** review that `index.ts` is the sole barrel; `package.json` `exports` (Node guide) blocks deep imports at the package wall.
+**Enforcement:** review that `index.ts` is the sole barrel; `package.json` `exports` (Bun guide) blocks deep imports at the package wall.
 
 ### 10.3 — Export the least; start private and promote deliberately.
 
@@ -197,4 +197,4 @@ for await (const u of listUsers()) if (u.isAdmin) break; // break stops early; l
 - `max-params 3` forcing options objects: [01-formatting-and-tooling.md](./01-formatting-and-tooling.md); options-object construction: [05-functions.md](./05-functions.md).
 - `@throws` versus `Result`, documenting failure modes: [08-error-handling.md](./08-error-handling.md). `{ signal }` cancellation: [09-concurrency.md](./09-concurrency.md).
 - Barrels at the boundary, import cycles, tree-shaking: [12-module-organization.md](./12-module-organization.md). Semver and breaking-change discipline: [git-and-code-review.md](../git-and-code-review.md).
-- Deep-import blocking via `package.json` `exports`: [typescript-node build chapter](../typescript-node/08-build-and-distribution.md).
+- Deep-import blocking via `package.json` `exports`: [typescript-bun build chapter](../typescript-bun/08-build-and-distribution.md).

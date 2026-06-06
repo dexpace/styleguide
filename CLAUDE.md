@@ -6,7 +6,7 @@ Pure-markdown styleguide canon for dexpace. No build, no tests — verification 
 
 - Root `README.md` defines 12 cross-cutting rules + the priority order (correctness > performance > DX). Per-language guides restate them natively and **extend a named canonical authority** (Google/PEPs/Kotlin conventions); where guidance conflicts, the authority wins, except deviations recorded in each guide's ledger.
 - `kotlin/`, `python/`, `typescript/` share an aligned 15-chapter spine (same number → same topic; 03 = the language-safety slot). `go/` predates the spine — don't propagate its layout.
-- Extension guides (`kotlin-jvm/`, `typescript-node/`, `typescript-react/`) are **additive**: they never weaken a core rule; where stricter, they win for that runtime. Cross-reference core chapters, don't restate.
+- Extension guides (`kotlin-jvm/`, `typescript-bun/`, `typescript-react/`) are **additive**: they never weaken a core rule; where stricter, they win for that runtime. Cross-reference core chapters, don't restate. The TS family is **bun-first** — `bun install`/`bun test`/`Bun.build` are the defaults, `tsc --noEmit` is the typecheck gate (Bun never type-checks), and React keeps Vitest+MSW for component tests as a recorded substitution; the retired Node guide lives at tag `node-guide-final`.
 
 ## Chapter format contract (typescript family; backport candidate)
 

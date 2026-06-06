@@ -5,8 +5,9 @@ Correctness is this guide's first value, and a test suite is its only proof. The
 ## What good looks like
 
 ```ts
-import {describe, it, expect, expectTypeOf} from 'vitest';
-import {fc, test as propTest} from '@fast-check/vitest';
+import {describe, it, expect} from 'bun:test';
+import {expectTypeOf} from 'expect-type';
+import fc from 'fast-check';
 import {encodeCursor, decodeCursor, type Cursor} from './cursor.js';
 
 describe('cursor codec', () => {
@@ -19,12 +20,16 @@ describe('cursor codec', () => {
     expect(encodeCursor(cursor)).not.toContain(':'); // negative space: opaque, no delimiter leaks (11.9)
   });
 
-  propTest.prop([fc.record({offset: fc.nat(), pageSize: fc.integer({min: 1, max: 100})})])(
-    'decode is the inverse of encode for every valid cursor', // round-trip property (11.5)
-    cursor => {
-      expect(decodeCursor(encodeCursor(cursor))).toEqual(cursor);
-    },
-  );
+  it('decode is the inverse of encode for every valid cursor', () => { // round-trip property (11.5)
+    fc.assert(
+      fc.property(
+        fc.record({offset: fc.nat(), pageSize: fc.integer({min: 1, max: 100})}),
+        cursor => {
+          expect(decodeCursor(encodeCursor(cursor))).toEqual(cursor);
+        },
+      ),
+    );
+  });
 
   it('exposes Cursor as a readonly type, not a mutable one', () => {
     expectTypeOf<Cursor>().toEqualTypeOf<{readonly offset: number; readonly pageSize: number}>();
@@ -32,23 +37,24 @@ describe('cursor codec', () => {
 });
 ```
 
-One module, tested three ways. The example-based `it` names the behaviour under its condition (11.2) and asserts both positive and negative space (11.9). The `fast-check` property proves the round-trip law over generated input, not one lucky case (11.5). The `expectTypeOf` test fails the build if `Cursor` ever loses its `readonly`, a correctness bug no runtime assertion can see (11.6). Imports are explicit — no globals (11.1) — and nothing touches a clock, a socket, or the filesystem, so the suite is deterministic (11.8).
+One module, tested three ways. The example-based `it` names the behaviour under its condition (11.2) and asserts both positive and negative space (11.9). The `fast-check` property, driven by `fc.assert(fc.property(...))` inside a plain `it`, proves the round-trip law over generated input, not one lucky case (11.5). The `expectTypeOf` test from `expect-type` fails the build if `Cursor` ever loses its `readonly`, a correctness bug no runtime assertion can see (11.6). Imports are explicit — no globals (11.1) — and nothing touches a clock, a socket, or the filesystem, so the suite is deterministic (11.8).
 
 ## Rules
 
-### 11.1 — Run Vitest with globals off; colocate unit tests, isolate integration tests.
+### 11.1 — Run `bun test` with explicit imports; colocate unit tests, isolate integration tests.
 
 **Reasoning, step by step:**
-1. Vitest is the runner: native ESM, TypeScript without a separate transform, and the `expectTypeOf` and `@fast-check/vitest` integrations the rest of this chapter depends on. It is not a per-project choice. Globals stay off (`globals: false`): `import {describe, it, expect} from 'vitest'` is explicit about where the symbols come from, the same stance chapter [12](./12-module-organization.md) takes on every other import; an auto-injected `it` is ambient magic, banned by root rule 2.
-2. Unit tests sit beside their subject as `foo.test.ts`. The test is the first consumer of `foo.ts` (11.12), and colocation keeps them moving together — rename, move, or delete the module and its test follows. Integration and end-to-end tests cross process or network boundaries, run on a different cadence, and live under a top-level `tests/`, not next to a single module.
+1. `bun test` is the runner: it executes TypeScript natively with no separate transform, ships a fast Jest-flavoured matcher surface, and integrates the seam this chapter depends on — `setSystemTime` for fake time (11.8) and coverage out of the box. It is not a per-project choice. Symbols are always imported explicitly — `import {describe, it, expect} from 'bun:test'` — never relied on as ambient globals: the import says where each symbol comes from, the same stance chapter [12](./12-module-organization.md) takes on every other import, and an auto-injected `it` is ambient magic, banned by root rule 2.
+2. Unit tests sit beside their subject as `foo.test.ts`. The test is the first consumer of `foo.ts` (11.12), and colocation keeps them moving together — rename, move, or delete the module and its test follows. Integration and end-to-end tests cross process or network boundaries, run on a different cadence, and live under a top-level `tests/`, not next to a single module. Coverage is produced with `bun test --coverage` (lcov), reported as a floor and a trend, never set as a pass/fail target (11.11).
 
 **Worked example:**
 ```ts
-import {describe, it, expect} from 'vitest'; // explicit; vitest config sets globals: false
+import {describe, it, expect} from 'bun:test'; // explicit; never ambient globals
 // src/cursor.ts        → src/cursor.test.ts   (unit, colocated)
 // tests/api.e2e.test.ts                        (integration, isolated)
+// bun test --coverage  → lcov, reported not targeted (11.11)
 ```
-**Enforcement:** `vitest.config.ts` with `globals: false`; `no-undef` flags an unimported `describe`/`it`/`expect`; review of test placement.
+**Enforcement:** all test symbols imported from `bun:test`; review flags any reliance on ambient `describe`/`it`/`expect`; `bun test --coverage` emits lcov; review of test placement.
 
 ### 11.2 — Arrange, act, assert; one behaviour per test; name the behaviour under its condition.
 
@@ -68,11 +74,11 @@ it('returns undefined when the id is unknown', () => {
 ```
 **Enforcement:** review for AAA shape and behavioural names; one logical behaviour per `it`.
 
-### 11.3 — Fake your own interfaces; reserve `vi.mock` for true externals.
+### 11.3 — Fake your own interfaces; reserve `mock.module` for true externals.
 
 **Reasoning, step by step:**
 1. For code you own, write a fake: a hand-rolled, in-memory implementation of your own interface. A `FakeUserRepository` backed by a `Map` is fully behavioural (it stores, finds, and deletes for real), so the test exercises real call paths instead of restating the implementation in mock expectations. A mock that returns canned values passes precisely when the code is wrong in the way you mocked it; the fake has no such blind spot. This is the same stance the Kotlin and Python guides take: real implementations wherever possible, doubles only at the genuine seam.
-2. `vi.mock` is for true externals only: a third-party SDK, a module with import-time side effects you cannot otherwise sever. The seam is the boundary of your own code; mock across it, never inside it. Name a double for what it is (`FakeUserRepository`, `StubClock`), never `MockClock` for a hand-rolled fake — the name lies to the next reader.
+2. `bun:test`'s `mock.module` is for true externals only: a third-party SDK, a module with import-time side effects you cannot otherwise sever. The seam is the boundary of your own code; mock across it, never inside it. Name a double for what it is (`FakeUserRepository`, `StubClock`), never `MockClock` for a hand-rolled fake — the name lies to the next reader.
 
 **Worked example:**
 ```ts
@@ -82,23 +88,24 @@ class FakeUserRepository implements UserRepository {
   find(id: UserId): User | undefined {return this.byId.get(id);} // real behaviour, in memory
 }
 ```
-**Enforcement:** review; `vi.mock` calls justified against an external boundary, not an owned interface.
+**Enforcement:** review; `mock.module` calls justified against an external boundary, not an owned interface.
 
-### 11.4 — Fake HTTP at the network with MSW; never monkey-patch `fetch`.
+### 11.4 — Test server HTTP by invoking the app directly; reserve MSW for React component tests.
 
 **Reasoning, step by step:**
-1. Reassigning `globalThis.fetch` to a mock tests your wiring against your own assumptions, not against HTTP. It skips URL construction, headers, status handling, and serialization — exactly the layer most likely to be wrong.
-2. Mock Service Worker (MSW) intercepts at the network layer, so the real `fetch` runs and your code exercises the genuine request/response path against a handler you control. The fake is the *server*, not the client. The handlers are reusable across unit, integration, and component tests, and the same definitions can back a dev server — one source of truth for what the upstream returns.
+1. Reassigning `globalThis.fetch` to a mock tests your wiring against your own assumptions, not against HTTP. It skips routing, URL construction, headers, status handling, and serialization — exactly the layer most likely to be wrong. The fix is not to fake the client but to run the real server-side path.
+2. On the server, exercise the handler by handing the app a real `Request` and asserting on the real `Response` it returns — `app.request(...)` for a Hono app (chapter [../typescript-bun/03](../typescript-bun/03-http-services.md)). No socket is opened, yet routing, validation, the error map, and serialization all run for real; the test drives the genuine request/response path with no network and no monkey-patched `fetch`.
+3. MSW is scoped to React component tests, where a component issues `fetch` to an upstream you do not own and there is no app object to invoke (chapter [../typescript-react/06](../typescript-react/06-testing-react.md)). There, Mock Service Worker intercepts at the network layer so the real `fetch` runs against a handler you control — the fake is the *server*, not the client, and the handlers are reusable across component tests and a dev server. Server-side HTTP tests do not reach for MSW; they call the app.
 
 **Worked example:**
 ```ts
-const server = setupServer(
-  http.get('https://api.example.com/users/:id', () =>
-    HttpResponse.json({id: 'u1', email: 'a@b.c'})),
-);
-// real fetch runs; the network is faked, not the client
+// server-side: invoke the app, no network, no fetch patching (../typescript-bun/03)
+const res = await app.request('/users/u1');
+expect(res.status).toBe(200);
+expect(await res.json()).toEqual({id: 'u1', email: 'a@b.c'});
+// React component tests fake the upstream with MSW instead (../typescript-react/06)
 ```
-**Enforcement:** review; no assignment to `globalThis.fetch`; HTTP doubles go through MSW.
+**Enforcement:** review; no assignment to `globalThis.fetch`; server-side HTTP tests go through `app.request`, MSW reserved for React component tests.
 
 ### 11.5 — Property-based tests are mandatory for codecs, parsers, serializers, and invariant-bearing functions.
 
@@ -108,9 +115,14 @@ const server = setupServer(
 
 **Worked example:**
 ```ts
-propTest.prop([fc.array(fc.integer())])('sorting is order-insensitive', xs => {
-  const shuffled = [...xs].reverse();
-  expect(sort(xs)).toEqual(sort(shuffled)); // same multiset, same result
+import fc from 'fast-check';
+it('sorting is order-insensitive', () => {
+  fc.assert(
+    fc.property(fc.array(fc.integer()), xs => {
+      const shuffled = [...xs].reverse();
+      expect(sort(xs)).toEqual(sort(shuffled)); // same multiset, same result
+    }),
+  );
 });
 ```
 **Enforcement:** review; codecs, parsers, serializers, and invariant-bearing functions ship with a `fast-check` property covering at least one canonical law.
@@ -119,14 +131,15 @@ propTest.prop([fc.array(fc.integer())])('sorting is order-insensitive', xs => {
 
 **Reasoning, step by step:**
 1. A public generic or conditional type is an API surface, and it can regress silently: a refactor widens an inferred return, a conditional collapses to `never`, a mapped type quietly drops `readonly`. No runtime test sees any of it, because the broken type still compiles and still runs. A type regression is a correctness bug, and the only test that catches it lives in the type space.
-2. Assert the type with `expectTypeOf`. Pin what the generic infers, that a conditional resolves to the branch it should, and that the negative case is rejected — `expectTypeOf(badCall).toBeNever()` or a `@ts-expect-error` line (chapter [03](./03-the-type-system.md) §3.3) proving misuse does not compile. The type-level test asserts negative space too (11.9). This is mandatory for every exported generic and conditional type — the constructs whose correctness the compiler enforces for callers but not for *you*; the test is how you hold yourself to the contract you publish.
+2. Assert the type with `expectTypeOf` from the standalone **`expect-type`** package — the runner-agnostic library that other frameworks' built-in `expectTypeOf` merely wraps and re-exports, used here directly so it works identically under `bun test`. It needs no test runner: the assertions are pure type-level checks that fail at compile time, so the gate is `tsc --noEmit` — the family's non-negotiable typecheck step, since `bun test` strips types and never checks them. Pin what the generic infers, that a conditional resolves to the branch it should, and that the negative case is rejected — `expectTypeOf(badCall).toBeNever()` or a `@ts-expect-error` line (chapter [03](./03-the-type-system.md) §3.3) proving misuse does not compile. The type-level test asserts negative space too (11.9). This is mandatory for every exported generic and conditional type — the constructs whose correctness the compiler enforces for callers but not for *you*; the test is how you hold yourself to the contract you publish.
 
 **Worked example:**
 ```ts
+import {expectTypeOf} from 'expect-type'; // standalone; checked by tsc --noEmit, not a runner
 expectTypeOf<Awaited<Promise<User>>>().toEqualTypeOf<User>();    // conditional resolves correctly
 expectTypeOf(parseUser).returns.toEqualTypeOf<ParseResult>();   // public generic's inferred return is pinned
 ```
-**Enforcement:** review; exported generics and conditional types ship with an `expectTypeOf` test; `vitest --typecheck` runs them in CI.
+**Enforcement:** review; exported generics and conditional types ship with an `expectTypeOf` test from `expect-type`; `tsc --noEmit` runs them as a CI gate.
 
 ### 11.7 — Give every custom type guard a truth-table test.
 
@@ -148,17 +161,17 @@ it('isUser accepts a complete user and rejects malformed input', () => {
 
 **Reasoning, step by step:**
 1. A test that depends on the wall clock, an unseeded random source, the live network, or the real filesystem is a flake waiting to happen: it passes locally, fails on slow CI, and erodes trust until a red build means nothing. Determinism is the precondition for a suite anyone believes, and it reduces to one line: no real network, clock, or filesystem in a unit test.
-2. Virtualize time with `vi.useFakeTimers()` and advance it explicitly with `vi.advanceTimersByTime(ms)` — never `await` a real `setTimeout` to "give it a moment." Inject clocks and ID generators rather than reading `Date.now()` or `crypto.randomUUID()` from the wild, the same injection the concurrency chapter relies on for testable timeouts (chapter [09](./09-concurrency.md)).
-3. `fast-check` is seeded, and on failure prints the seed and the shrunk counterexample — log that seed in CI, or the shrink that found the bug is lost. HTTP goes through MSW (11.4), time through fake timers, persistence through a fake (11.3).
+2. Virtualize time with `bun:test`'s `setSystemTime(date)` — pin the clock to a fixed instant so `Date.now()` and `new Date()` return a known value, and call `setSystemTime()` with no argument to restore the real clock. Never `await` a real `setTimeout` to "give it a moment." Better still, inject clocks and ID generators rather than reading `Date.now()` or `crypto.randomUUID()` from the wild, the same injection the concurrency chapter relies on for testable timeouts (chapter [09](./09-concurrency.md)); `setSystemTime` is the seam of last resort for code that reads the clock directly.
+3. `fast-check` is seeded, and on failure prints the seed and the shrunk counterexample — log that seed in CI, or the shrink that found the bug is lost. HTTP is tested by invoking the app directly (11.4), time through `setSystemTime`, persistence through a fake (11.3).
 
 **Worked example:**
 ```ts
-vi.useFakeTimers();
-const promise = withTimeout(slowCall(), 1000);
-vi.advanceTimersByTime(1000); // deterministic; no real wall-clock wait
-await expect(promise).rejects.toThrow(TimeoutError);
+import {setSystemTime} from 'bun:test';
+setSystemTime(new Date('2026-01-01T00:00:00.000Z')); // pin the clock; deterministic, no wall-clock read
+expect(isExpired({expiresAt: Date.parse('2025-12-31T00:00:00.000Z')})).toBe(true);
+setSystemTime(); // restore the real clock
 ```
-**Enforcement:** `vi.useFakeTimers` for time-dependent tests; seeded `fast-check` with the seed logged; review forbids real network/clock/fs in unit tests.
+**Enforcement:** `setSystemTime` (from `bun:test`) for time-dependent tests; seeded `fast-check` with the seed logged; review forbids real network/clock/fs in unit tests.
 
 ### 11.9 — Assert positive and negative space.
 
@@ -181,7 +194,7 @@ it('createUser persists exactly one record', () => {
 ### 11.10 — Share no mutable fixtures; let no test depend on another.
 
 **Reasoning, step by step:**
-1. Every test must run alone, in any order, in parallel — Vitest parallelizes by default, so any cross-test coupling is already a future flake. A test that passes only after another has run is not a test, it is a fragment of one. A shared mutable fixture (a module-level array a test pushes into, a `FakeRepository` constructed once at the top and reused) leaks state between tests: one test's write becomes another's surprise, and a failure in test A masks the real cause in test B.
+1. Every test must run alone, in any order, and survive parallel execution — `bun test` runs sequentially by default but parallelizes under `--concurrent`/`test.concurrent`, so any cross-test coupling is already a future flake. A test that passes only after another has run is not a test, it is a fragment of one. A shared mutable fixture (a module-level array a test pushes into, a `FakeRepository` constructed once at the top and reused) leaks state between tests: one test's write becomes another's surprise, and a failure in test A masks the real cause in test B.
 2. Build fixtures fresh — in the test, in `beforeEach`, or from a factory function — so each test starts from the same clean world.
 3. Factory functions with defaults keep fresh setup terse: `makeUser({isActive: false})` returns a brand-new object each call, overriding only what the test cares about. Immutable shared data (a frozen constant, a parsed schema) is safe to hoist; mutable state never is.
 
@@ -194,18 +207,21 @@ beforeEach(() => {repo = new FakeUserRepository();}); // clean world per test
 ```
 **Enforcement:** review; no module-level mutable fixtures; setup in `beforeEach` or a factory, never hoisted shared state.
 
-### 11.11 — Run mutation testing nightly; report coverage, never target it.
+### 11.11 — Report coverage, never target it; mutation testing is an accepted gap on Bun.
 
 **Reasoning, step by step:**
-1. Line coverage measures which lines ran, not whether an assertion would have caught a bug on them. A suite can execute every line and assert nothing meaningful — 100% coverage with 0% of the bugs caught. Targeting the percentage optimizes the metric and corrupts the suite: tests get written to touch lines, not to verify behaviour.
-2. Mutation testing is the honest metric. Stryker introduces small faults (flips a `<` to `<=`, drops a branch, swaps a return) and reruns the suite; a mutant that survives is a behaviour no test actually checks, a precise to-do list of missing assertions that coverage only pretends to be. Runs are expensive, so schedule them nightly: run them, read the survivors, close the gaps. Coverage is still *reported*, a useful floor and a trend, but never the goal, and a build never passes or fails on a coverage number alone. The percentage answers "what ran"; mutation answers "what was checked," and only the second is correctness.
+1. Line coverage measures which lines ran, not whether an assertion would have caught a bug on them. A suite can execute every line and assert nothing meaningful — 100% coverage with 0% of the bugs caught. Targeting the percentage optimizes the metric and corrupts the suite: tests get written to touch lines, not to verify behaviour. So coverage is *reported* — `bun test --coverage` emits lcov (11.1), a useful floor and a trend — but never the goal, and a build never passes or fails on a coverage number alone. The percentage answers "what ran"; it does not answer "what was checked," and only the second is correctness.
+2. Mutation testing is the metric that *does* answer "what was checked": introduce small faults (flip a `<` to `<=`, drop a branch, swap a return) and rerun the suite; a mutant that survives is a behaviour no test actually checks, a precise to-do list of missing assertions that coverage only pretends to be. The honest constraint today is tooling: there is no mutation-testing runner for `bun test` — Stryker has no Bun runner — so this is a recorded, accepted gap, not a silent omission. The discipline does not lapse: assert behaviour as if a mutant were hunting each branch (11.9), and the moment a Bun-compatible runner lands, mutation testing returns as a nightly job. Naming the gap keeps the coverage number honest in the meantime — it is a floor we read, never a target we game.
 
 **Worked example:**
-```jsonc
-// stryker.config.jsonc — nightly CI job, not per-commit
-{"testRunner": "vitest", "reporters": ["html", "clear-text"], "mutate": ["src/**/*.ts"]}
+```toml
+# bunfig.toml — no per-commit coverage gate; coverage is a reported trend, not a pass/fail line
+[test]
+coverage = true
+coverageReporter = ["text", "lcov"]
+# mutation testing: accepted gap — no bun test runner yet; revisit when one ships
 ```
-**Enforcement:** recommended nightly Stryker run; coverage reported as a trend, never set as a pass/fail target.
+**Enforcement:** coverage reported as a trend (lcov via `bun test --coverage`), never a pass/fail target; mutation testing recorded as an accepted gap until a Bun-compatible runner exists.
 
 ### 11.12 — Treat the test as the first caller; an unergonomic test is an API smell.
 

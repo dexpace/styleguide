@@ -49,7 +49,7 @@ One `AbortController` is the lifecycle handle for the fetch, the interval, and t
 3. `await using` is the asynchronous form: it invokes `Symbol.asyncDispose` and awaits it. Use it for anything whose teardown is async — connections, async iterators, server handles. Use plain `using` only when disposal is synchronous.
 4. Disposal still runs if the body throws; if disposal itself throws, the runtime wraps both in `SuppressedError` — the disposal failure becomes the primary error and the original is preserved as `.suppressed`, never silently lost. So `await using cursor = await db.openCursor(query)` disposes `cursor` even when the code that consumes it throws.
 
-**Enforcement:** review; a locally-scoped resource with a `Symbol.dispose`/`Symbol.asyncDispose` member is bound with `using`/`await using`, never closed by hand. The disposable types need an explicit `"lib": ["es2023", "esnext.disposable"]` entry in `tsconfig` — a platform setting riding the same lane as ch01's `module: nodenext` override, not a seventh strictness flag (1.x).
+**Enforcement:** review; a locally-scoped resource with a `Symbol.dispose`/`Symbol.asyncDispose` member is bound with `using`/`await using`, never closed by hand. The disposable types need an explicit `"lib": ["es2023", "esnext.disposable"]` entry in `tsconfig` — a platform setting that, like the `module`/`moduleResolution` pair, core ch01 defers to the runtime guide ([../typescript-bun/01-runtime-and-toolchain.md](../typescript-bun/01-runtime-and-toolchain.md)), not a seventh strictness flag (1.x).
 
 ### 13.2 — Owned resources implement `Symbol.dispose` / `Symbol.asyncDispose`.
 
@@ -155,20 +155,20 @@ const pool = createPool({ max: 20, acquireTimeoutMs: 2_000 }); // bound + bounde
 
 **Reasoning, step by step:**
 1. A leak is invisible until production. The test for resource management is the negative-space assertion (pairs with 11): not just that the resource worked, but that it was *released*. Spy on the disposer and assert it ran exactly once on both the happy path and the throwing path.
-2. Drain fake timers. Under `vi.useFakeTimers()`, assert `vi.getTimerCount() === 0` after the unit under test disposes — a non-zero count is an orphaned `setInterval` caught at test time instead of in a memory graph at 3am.
+2. Make timer ownership testable by design. `bun test` exposes no timer-count introspection, so don't rely on one: setup returns a disposer (13.5), the test runs disposal, then waits a tick and asserts the spied callback count did not move — an orphaned `setInterval` is caught at test time instead of in a memory graph at 3am.
 3. Close handles in `afterEach`. Anything a test opens, the same test's teardown disposes, so a leak in the subject cannot mask itself by riding the suite's process exit. `await using` inside the test body gives this for free.
 4. Assert the *order* of release for composite teardown (13.7): record disposals into an array and assert it equals the reverse of the acquisition sequence. Order regressions are silent otherwise.
 
 ```ts
 it('disposes the connection even when the body throws', async () => {
-  const dispose = vi.fn();
+  const dispose = mock(() => {}); // bun:test
   const conn = { [Symbol.asyncDispose]: dispose };
   await expect(runWith(conn, () => { throw new Error('boom'); })).rejects.toThrow('boom');
-  expect(dispose).toHaveBeenCalledOnce(); // released on the exceptional path
+  expect(dispose).toHaveBeenCalledTimes(1); // released on the exceptional path
 });
 ```
 
-**Enforcement:** Vitest; cleanup is asserted with a spied disposer, `vi.getTimerCount()` is checked under fake timers, and `afterEach` closes what the test opened.
+**Enforcement:** `bun test`; cleanup is asserted with a spied disposer, fake time runs through `setSystemTime` (`bun:test`), and `afterEach` closes what the test opened.
 
 ## Cross-references
 

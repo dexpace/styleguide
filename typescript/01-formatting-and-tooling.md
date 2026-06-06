@@ -4,29 +4,29 @@ Formatting is not a matter of taste. We delegate it to one tool, `gts`, and spen
 
 ## What good looks like
 
-`npx gts init` scaffolds the gts defaults; replace the generated configs with the dexpace overlay below. Pin the toolchain and layer the overlay on top:
+`bunx gts init` scaffolds the gts defaults; replace the generated configs with the dexpace overlay below. Pin the toolchain and layer the overlay on top:
 
 ```jsonc
-// package.json
+// package.json — pin Bun out-of-band with a committed `.bun-version` file, not a field here
 {
   "type": "module",
-  "packageManager": "pnpm@9.12.0",
   "devDependencies": {"gts": "^7", "typescript": "^5.8", "typescript-eslint": "^8"},
   "scripts": {
     "lint": "gts lint",
     "fix": "gts fix",
     "compile": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "bun test"
   }
 }
 ```
 
 ```jsonc
-// tsconfig.json — gts base, plus the six strictness flags and one platform override
+// tsconfig.json — gts base, plus exactly the six strictness flags
 {
   "extends": "./node_modules/gts/tsconfig-google.json",
   "compilerOptions": {
-    "module": "nodenext", // gts base sets module: commonjs; dexpace is ESM-only (nodenext implies nodenext resolution)
+    // platform module settings (module/moduleResolution, lib additions) live with the
+    // runtime guide, not here — see the runtime-and-toolchain chapter
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
@@ -59,7 +59,7 @@ export default tseslint.config(
 );
 ```
 
-This demonstrates 1.5 (`packageManager` pinned for corepack) and 1.6 (a single overlay layering the type-checked tiers on gts). The generated `.prettierrc.js` re-exports the gts defaults verbatim; per 1.2 we never edit it.
+This demonstrates 1.5 (`bun install` against a committed lockfile, Bun pinned via `.bun-version`) and 1.6 (a single overlay layering the type-checked tiers on gts). The generated `.prettierrc.js` re-exports the gts defaults verbatim; per 1.2 we never edit it.
 
 ## Rules
 
@@ -67,7 +67,7 @@ This demonstrates 1.5 (`packageManager` pinned for corepack) and 1.6 (a single o
 
 **Reasoning, step by step:**
 1. gts bundles Prettier, ESLint, and a TypeScript base config behind one opinionated dependency, so the formatter and linter cannot drift apart between projects.
-2. Bootstrap with `npx gts init`; it scaffolds the config files and scripts so every package starts identical.
+2. Bootstrap with `bunx gts init`; it scaffolds the config files and scripts so every package starts identical.
 3. `gts fix` runs locally and auto-fixes; `gts lint` runs in CI as the gate. A developer never argues with the output, and a reviewer never comments on it.
 4. A hand-rolled `.prettierrc` or a parallel `.eslintrc` re-opens the argument gts exists to close. Delete them; extend gts instead.
 
@@ -85,7 +85,7 @@ This demonstrates 1.5 (`packageManager` pinned for corepack) and 1.6 (a single o
 ### 1.3 — tsconfig extends the gts base and adds exactly six flags.
 
 **Reasoning, step by step:**
-1. The gts base sets `strict` and the sensible defaults, but leaves off six strictness flags that close real holes in the type system. Add precisely these six, no more. (Platform settings — the `module: nodenext` override forcing ESM because the gts base targets CommonJS, and `lib` additions like `esnext.disposable` for ch13's `using` — are a separate matter, distinct from the six strictness flags.)
+1. The gts base sets `strict` and the sensible defaults, but leaves off six strictness flags that close real holes in the type system. Add precisely these six, no more. (Platform settings — the `module`/`moduleResolution` pair the runtime dictates, and `lib` additions like `esnext.disposable` for ch13's `using` — are a separate matter, distinct from the six strictness flags; they live with the runtime guide, not in core.)
 2. Each flag earns its place by turning a class of latent runtime bug into a compile error.
 3. Adding strictness flags beyond this set is a guide change, not a per-project choice; the set is uniform so a file behaves identically in every repo.
 
@@ -109,14 +109,15 @@ This demonstrates 1.5 (`packageManager` pinned for corepack) and 1.6 (a single o
 
 **Enforcement:** the `typescript` range in `package.json`; review on every bump.
 
-### 1.5 — pnpm, pinned through corepack's `packageManager` field.
+### 1.5 — `bun install` against a committed `bun.lock`; `--frozen-lockfile` in CI.
 
 **Reasoning, step by step:**
-1. pnpm's strict, non-flat `node_modules` means a package can import only what it actually declares; an undeclared dependency fails loudly instead of working by accident.
-2. Its content-addressed store and lockfile give byte-reproducible installs across machines and CI.
-3. The `packageManager` field (e.g. `pnpm@9.12.0`) lets corepack provision the exact version, so every developer and the CI runner use one resolver.
+1. `bun install` records resolved versions in `bun.lock` (a text lockfile since Bun 1.2, superseding the old binary `bun.lockb`). Commit it: it pins the whole dependency graph so every machine resolves the same versions.
+2. In CI, run `bun install --frozen-lockfile` (equivalently `bun ci`). Frozen mode installs exactly what the lockfile records and fails the build if `package.json` and `bun.lock` disagree — it never silently updates the lockfile, so an unreviewed dependency drift cannot slip through.
+3. Be honest about isolation: by default `bun install` hoists into a flat `node_modules` (the npm/yarn layout), so a package can resolve a transitive dependency it never declared. The lockfile plus frozen mode guarantee *reproducibility* — the same versions on every machine — not pnpm-style strictness. Where strict per-package isolation matters, opt into Bun's isolated linker (`--linker isolated`, symlinks under `node_modules/.bun/`), which is the monorepo default; otherwise an undeclared import is caught by `tsc --noEmit` and review, not by the layout.
+4. Pin the Bun version out-of-band with a committed `.bun-version` file (Bun has no LTS line), so every developer and the CI runner use one resolver and one runtime.
 
-**Enforcement:** `packageManager` in `package.json`; corepack enabled in CI.
+**Enforcement:** committed `bun.lock` and `.bun-version`; `bun install --frozen-lockfile` (`bun ci`) in CI.
 
 ### 1.6 — One ESLint overlay file, extending gts.
 

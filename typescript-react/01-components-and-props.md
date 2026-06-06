@@ -91,11 +91,11 @@ Worked example: replace `const UserCard: React.FC<UserCardProps> = (props) => �
 **Reasoning, step by step:**
 1. The signature is the documentation, the same instinct as core [5.5](../typescript/05-functions.md): the parameter list is what a reader scans before the body. Destructuring the props there lists every input the component reads, in one place: `function UserCard({userId, header, density, onSelect}: UserCardProps)`.
 2. Put optional defaults in that same destructure — `density = 'cozy'` — so the default sits beside the name it fills. The reader learns both the field and its fallback in one token, and the body never repeats `density ?? 'cozy'` at each use.
-3. This keeps the body honest about its inputs: a prop read but absent from the destructure is a visible omission, and a `defaultProps` block (deprecated for function components) is never needed.
+3. This keeps the body honest about its inputs: a prop read but absent from the destructure is a visible omission, and a `defaultProps` block (deprecated for function components) is never needed. `ref` is one such input: in React 19 a function component takes `ref` as an ordinary prop, declared in `XProps` and destructured in the signature like any other — `function TextField({label, ref}: TextFieldProps)` ([react.dev: ref as a prop](https://react.dev/blog/2024/12/05/react-19#ref-as-a-prop)). `forwardRef` is the pre-19 legacy form, kept only as a migration note; new components reach for the prop, not the wrapper.
 
-Worked example: `function UserCard({userId, density = 'cozy', onSelect}: UserCardProps)` documents three inputs and one default in the signature. A body that instead reads `props.density ?? 'cozy'` in three places hides the default and forces the reader to reconstruct the input list from usage.
+Worked example: `function UserCard({userId, density = 'cozy', onSelect}: UserCardProps)` documents three inputs and one default in the signature. A body that instead reads `props.density ?? 'cozy'` in three places hides the default and forces the reader to reconstruct the input list from usage. A component that needs to forward a DOM node adds `ref?: Ref<HTMLInputElement>` to its props and destructures it — no `forwardRef(…)` wrapper, no second type parameter.
 
-**Enforcement:** ESLint `react/destructuring-assignment` (always destructure) and `react/require-default-props` set to the signature-default form; review rejects `defaultProps` on function components.
+**Enforcement:** ESLint `react/destructuring-assignment` (always destructure) and `react/require-default-props` set to the signature-default form; review rejects `defaultProps` on function components and a new `forwardRef` wrapper where a `ref` prop now suffices (React 19).
 
 ### 1.5 — Compose with `children` and named slots, not boolean configuration (REACT-6).
 

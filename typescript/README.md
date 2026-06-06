@@ -2,7 +2,7 @@
 
 Binding TypeScript rules for all dexpace projects; extends [Google's TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). Target **TypeScript 5.8+**, ESM-only, `gts` for tooling. Prioritize **correctness**, **explicitness**, **simplicity** — never cleverness, never `any`, never abstraction for its own sake.
 
-This guide is platform-agnostic. It covers the TypeScript language, its type system, and runtime-neutral idioms. Runtime-specific rules live in the companion guides: server concerns in [typescript-node](../typescript-node/), UI concerns in [typescript-react](../typescript-react/).
+This guide is platform-agnostic. It covers the TypeScript language, its type system, and runtime-neutral idioms. Runtime-specific rules live in the companion guides: server concerns in [typescript-bun](../typescript-bun/), UI concerns in [typescript-react](../typescript-react/).
 
 ### Authorities
 
@@ -30,7 +30,7 @@ All four are held to one standard of elegant, well-structured code, enforced thr
 
 | # | Document | Scope |
 |---|----------|-------|
-| 01 | [Formatting & Tooling](./01-formatting-and-tooling.md) | gts only; ESLint overlay + tsconfig flags; TS ≥ 5.8; pnpm; pre-commit `gts lint`; 70-line cap, `max-depth 3`, `max-params 3` |
+| 01 | [Formatting & Tooling](./01-formatting-and-tooling.md) | gts only; ESLint overlay + tsconfig flags; TS ≥ 5.8; bun install; pre-commit `gts lint`; 70-line cap, `max-depth 3`, `max-params 3` |
 | 02 | [Naming Conventions](./02-naming-conventions.md) | Google casing, kebab-case files, client verb taxonomy, no `I` prefix, no `Async` suffix, names designed for the call site |
 | 03 | [The Type System](./03-the-type-system.md) | `any` banned (`unknown` + narrowing), `as` needs a why, `satisfies`/guards/parse, absence = `undefined`, tested type guards, branded primitives, `readonly` |
 | 04 | [Variables & Declarations](./04-variables-and-declarations.md) | `const` default, `let` justified, `var` banned, non-null `!` banned outside bridges, `as const` config |
@@ -40,7 +40,7 @@ All four are held to one standard of elegant, well-structured code, enforced thr
 | 08 | [Error Handling](./08-error-handling.md) | `Error` subclasses, mandatory `cause` chaining, `catch (e: unknown)` + narrow, opt-in `Result` unions, programmer vs operational errors |
 | 09 | [Concurrency & Async](./09-concurrency.md) | async/await only, `no-floating-promises`, `AbortSignal.timeout()`, bounded fan-out via a worker-pool helper, documented races |
 | 10 | [API Design](./10-api-design.md) | Named exports only, `index.ts` is the contract, accept interfaces / return concrete, zod at boundaries, `@deprecated` + semver, API symmetry |
-| 11 | [Testing](./11-testing.md) | Vitest, colocated `*.test.ts`, fast-check property tests, `expectTypeOf` type-level, fakes over mocks, MSW, determinism |
+| 11 | [Testing](./11-testing.md) | bun test, colocated `*.test.ts`, fast-check property tests, `expectTypeOf` type-level, fakes over mocks, MSW, determinism |
 | 12 | [Module Organization](./12-module-organization.md) | ESM only, `import type` discipline, feature folders, barrels at the boundary only, `madge --circular`, no module side effects |
 | 13 | [Resource Management](./13-resource-management.md) | `using`/`await using`, `Symbol.dispose`, AbortController as lifecycle handle, bounded pools/queues/caches |
 | 14 | [Documentation](./14-documentation.md) | TSDoc on public API, never restate types, why-comments, `@example` on non-obvious publics |
@@ -50,7 +50,7 @@ All four are held to one standard of elegant, well-structured code, enforced thr
 
 ## Cross-Cutting Concerns
 
-Security, performance, and git practices are covered in the [root-level code style guide](../README.md). The cross-cutting docs are language-agnostic; this guide adapts them to TypeScript. Runtime-specific concerns are in [typescript-node](../typescript-node/) and [typescript-react](../typescript-react/).
+Security, performance, and git practices are covered in the [root-level code style guide](../README.md). The cross-cutting docs are language-agnostic; this guide adapts them to TypeScript. Runtime-specific concerns are in [typescript-bun](../typescript-bun/) and [typescript-react](../typescript-react/).
 
 ## The 12 Rules in TypeScript
 

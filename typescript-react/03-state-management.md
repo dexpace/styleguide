@@ -85,9 +85,13 @@ const {data, isPending, isError} =  // good — cache owns it; read at point of 
 **Reasoning, step by step:**
 1. Context is dependency injection: it threads a value — the theme, the auth client, feature flags, the query client — to a subtree without prop drilling. These are low-frequency values: they are set once and change rarely or never over a session.
 2. Context is not a state container: every consumer re-renders whenever the provider's value changes, with no selector to subscribe to a slice. Put frequently-changing state behind it and an unrelated update repaints the whole subtree. Keep Context values stable and coarse; dynamic, high-frequency client state belongs in a store with selective subscription (3.5), while Context carries the dependencies that store and components both need.
+3. Provide with `<Context value={…}>` directly — in React 19 the context object *is* the provider, so `<Context.Provider>` is the legacy form ([react.dev: Context as a provider](https://react.dev/blog/2024/12/05/react-19#context-as-a-provider)). Read at the top of a hook with `useContext`; reach for `use(Context)` only when the read must sit behind a condition or an early return (02-hooks 2.8), since `use` is the one reader allowed there.
 
 ```tsx
 const AuthContext = createContext<AuthClient | null>(null);  // a stable client injected once
+export function AuthProvider({client, children}: AuthProviderProps) {
+  return <AuthContext value={client}>{children}</AuthContext>;  // React 19: the context is the provider
+}
 export function useAuth(): AuthClient {
   const client = useContext(AuthContext);
   if (client === null) throw new Error('useAuth needs <AuthProvider>');
@@ -95,7 +99,7 @@ export function useAuth(): AuthClient {
 }
 ```
 
-**Enforcement:** Review trigger — a Context whose value is a frequently-updated object (especially `useState` piped straight into a provider) should be a store; Context carries dependencies, not churn.
+**Enforcement:** Review trigger — a Context whose value is a frequently-updated object (especially `useState` piped straight into a provider) should be a store; Context carries dependencies, not churn. New providers render `<Context value={…}>`; a new `<Context.Provider>` in fresh code is flagged for the React 19 form.
 
 ### 3.5 — Reach for Zustand only for genuinely global, dynamic client state.
 
@@ -135,6 +139,7 @@ const value = useFeatureStore((s) => s.value);
 **Reasoning, step by step:**
 1. Once a component's state is a small machine — more than a couple of independent transitions — scatter the `setState` calls across handlers and the legal transitions become impossible to see or test. Gather them into a `useReducer` whose reducer is a pure function `(state, action) => state`.
 2. A pure transition function is testable without rendering: call `reducer(state, action)` in a unit test and assert on the returned state — no DOM, no act-warnings, no mounting. This is the root principle "data and functions, not objects": the machine is data, the transitions are functions beside it (see 3.5). Combined with 3.2, the reducer's state is a union and the function `switch`es on the action, so an unhandled action or illegal transition is a compile-time gap, not a runtime surprise.
+3. When the machine *is* a form submission — pending, error, result threaded through one async transition — `useActionState` is the same `(state, action) => state` shape wired to a form Action, returning the next state plus an `isPending` flag for free ([react.dev: useActionState](https://react.dev/reference/react/useActionState), wired through form Actions in [04.6](./04-data-fetching-and-forms.md)). It complements this rule rather than replacing it: a pure `useReducer` still owns the synchronous client machine; `useActionState` owns the async, submission-shaped one.
 
 ```tsx
 type Action = {type: 'edit'; draft: string} | {type: 'cancel'};

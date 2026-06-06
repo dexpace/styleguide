@@ -1,6 +1,6 @@
 # 09 — Concurrency
 
-JavaScript runs on a single thread. What we call concurrency here is interleaved I/O: many `await`s in flight, the runtime resuming each as its data arrives, never two lines of your code running at once. This chapter keeps that interleaving correct and bounded — every promise accounted for, every external wait deadlined, every fan-out ceilinged, every cancellation propagated to the leaves. Cross-thread parallelism is a separate concern and lives in the runtime guides ([typescript-node](../typescript-node/) workers).
+JavaScript runs on a single thread. What we call concurrency here is interleaved I/O: many `await`s in flight, the runtime resuming each as its data arrives, never two lines of your code running at once. This chapter keeps that interleaving correct and bounded — every promise accounted for, every external wait deadlined, every fan-out ceilinged, every cancellation propagated to the leaves. Cross-thread parallelism is a separate concern and lives in the runtime guides ([typescript-bun](../typescript-bun/) workers).
 
 ## What good looks like
 
@@ -230,4 +230,4 @@ function enqueue(key: string, task: () => Promise<Response>): Promise<Response> 
 - `toError`, `AggregateError` fan-out (§8.11), programmer vs operational errors: [chapter 08](./08-error-handling.md).
 - `AbortController`/`AbortSignal` as a lifecycle handle, bounded pools and queues, `using`/`await using`: [chapter 13](./13-resource-management.md).
 - Eliminating serial `await`s, V8 and the event loop: [chapter 15](./15-performance.md).
-- Worker threads and cross-thread parallelism: [typescript-node](../typescript-node/).
+- Worker threads and cross-thread parallelism: [typescript-bun](../typescript-bun/).

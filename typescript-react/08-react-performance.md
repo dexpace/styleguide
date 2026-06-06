@@ -76,7 +76,7 @@ function Toggle({children}: {children: ReactNode}) {
 
 **Reasoning, step by step:**
 1. A route is a natural code-splitting seam: the user navigating to `/settings` is exactly the moment its code is needed and not before. `React.lazy()` plus a `<Suspense>` fallback makes the bundle for a route arrive when the route does, so the initial load ships only the entry route — the largest, cheapest win available to a client bundle.
-2. The boundary is the route component, paired with the router (chapter 05's 5.4 owns the route-tree wiring): each lazily-imported page is one async chunk with one fallback, which keeps the loading states coarse and predictable instead of scattering spinners through the tree.
+2. The boundary is the route component, paired with the router (chapter 05's 5.4 owns the route-tree wiring): each lazily-imported page is one async chunk with one fallback, which keeps the loading states coarse and predictable instead of scattering spinners through the tree. `lazy()` still resolves to a module's `default` export in React 19 ([react.dev: lazy](https://react.dev/reference/react/lazy)), so a route page is the one place a default export earns its keep against the named-export default (5.3); a named-export page gets a one-line `export { Page as default }` shim rather than a static import.
 3. Finer-grained splitting below the route — lazy-loading a heavy modal, an editor, a charting library — is a real tool but a conditional one: it costs a request and a fallback at an interaction boundary, so it earns its place only when the bundle analyzer (8.5) shows a specific dependency heavy enough to defer. Split on evidence, not on the reflex to lazy-load everything.
 
 ```tsx
