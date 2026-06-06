@@ -36,7 +36,7 @@ These rules apply to *every* dexpace project regardless of language. Each per-la
 9. **Limits on everything.** All loops, queues, retries, buffers, and timeouts must have a fixed upper bound. No recursion in library code — all execution must be provably bounded. Functions must not exceed the language's documented size cap (70 lines in Go, 60 in Kotlin, similar in Python).
 10. **Small functions, breathing room.** Functions do one thing. Aim for 15–40 lines. Separate logical sections with blank lines. Cramped code is unreadable code. Whitespace is free — use it.
 11. **Performance from the outset.** Design-time is the best time for 1000× improvements. Work with the grain of the runtime. Optimize for the slowest resource first: network > disk > memory > CPU. See [performance.md](./performance.md).
-12. **Zero technical debt.** What exists meets the design goals. Do it right the first time. The second chance may never come.
+12. **Zero technical debt.** Perfection over technical debt — debt never gets paid. Do it right the first time. The second chance may never come.
 
 ## Per-language guides
 
@@ -48,6 +48,7 @@ Each guide adapts the cross-cutting rules to a specific language, names its cano
 | Kotlin (any target) | [`kotlin/`](./kotlin/) | [Kotlin coding conventions](https://kotlinlang.org/docs/coding-conventions.html) | Platform-agnostic Kotlin: nullability, sealed hierarchies, scope functions, coroutines, structured concurrency. |
 | Kotlin on JVM | [`kotlin-jvm/`](./kotlin-jvm/) | Extends `kotlin/`; defers to Kotlin coding conventions + Spring/Jackson/SLF4J ecosystem norms | Java interop annotations, Spring/Ktor wiring, JPA, Loom vs coroutines, Jackson at boundaries. |
 | Python | [`python/`](./python/) | [PEP 8](https://peps.python.org/pep-0008/) + [PEP 20](https://peps.python.org/pep-0020/) + [PEP 484/604](https://peps.python.org/pep-0484/) | Python 3.12+. Type hints + mypy strict, dataclasses + Protocols, asyncio with `TaskGroup`, Ruff for lint + format. |
+| TypeScript | [`typescript/`](./typescript/) | [Google TS Style Guide](https://google.github.io/styleguide/tsguide.html) + [ts.dev/style](https://ts.dev/style/) | TS 5.8+, erasable syntax only, gts toolchain + type-aware overlay, Vitest + fast-check + expectTypeOf, zod at boundaries. |
 
 Each guide is split into topic files (formatting, naming, error handling, concurrency, API design, testing, etc.). Read the guide's `README.md` for the index.
 
