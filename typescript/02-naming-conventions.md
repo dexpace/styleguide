@@ -161,3 +161,4 @@ Properties, parameters, and methods are `lowerCamelCase`; the type and class are
 - [03-the-type-system.md](./03-the-type-system.md) — branded primitives that make units (2.10) type-checkable; `as const` maps (2.3).
 - [10-api-design.md](./10-api-design.md) — the client surface and `Error` subclasses the verb taxonomy (2.6) governs.
 - [12-module-organization.md](./12-module-organization.md) — module layout that kebab-case files (2.4) feed.
+- [typescript-react/05-structure-and-routing.md](../typescript-react/05-structure-and-routing.md) — the React chapter that overrides the kebab-case file rule (2.4) to PascalCase component files.
