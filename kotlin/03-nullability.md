@@ -2,6 +2,36 @@
 
 Nullability is the single most-improved part of Kotlin over Java. Use it. Disrespect it and you get NPEs the type system was specifically designed to prevent.
 
+## What good looks like
+
+```kotlin
+sealed interface ChargeResult {
+    data class Charged(val receipt: Receipt) : ChargeResult
+    data class Rejected(val reason: String) : ChargeResult
+}
+
+/** Boundary: the nullable request becomes a non-null command here, once. */
+fun handleCharge(raw: ChargeRequest?): ChargeResult {
+    val request = raw ?: return ChargeResult.Rejected("empty request")
+    val userId = requireNotNull(request.userId) { "charge request has no user id" }
+    val amount = request.amount ?: error("charge request has no amount")
+    return chargeCard(loadUser(userId), amount)
+}
+
+/** Internals take non-null types; no re-checking, no `!!`. */
+private fun chargeCard(user: User, amount: Cents): ChargeResult {
+    val card = user.defaultCard ?: return ChargeResult.Rejected("user ${user.id} has no default card")
+    return ChargeResult.Charged(card.charge(amount))
+}
+
+fun main() {
+    val result = handleCharge(ChargeRequest(userId = "u-1", amount = Cents(500)))
+    check(result is ChargeResult.Charged) { "expected a charge, got $result" }
+}
+```
+
+Non-null is the default and `?` is opt-in (3.1); the request's nullability is resolved at the boundary so internals operate on non-null types (3.3); Elvis supplies a real default or `error(...)` rather than `!!` (3.4); `requireNotNull` marks the contract violation as the caller's fault (3.10); absence is modeled as a sealed `ChargeResult` instead of a leaked `T?` (3.1). No `!!` survives the boundary (3.2).
+
 ## Rules
 
 ### 3.1 — Non-null is the default. Null is something you opt into.
@@ -11,6 +41,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 2. Adding `?` to a return type is a *breaking* change for callers who relied on the type system to mean "never null." Treat it like changing a method signature.
 3. Removing `?` from a parameter type is similarly breaking — old callers may have been passing null.
 4. **Default principle:** prefer the non-null type. If a value can be absent, ask whether "absent" deserves its own representation (sealed `Optional`-ish ADT, an empty collection, a sentinel) before reaching for `?`.
+
+**Enforcement:** review; adding `?` to a return type or removing it from a parameter is a breaking-change gate in code review.
 
 ### 3.2 — `!!` is banned outside `main`/test scaffolding and well-justified bridges.
 
@@ -23,6 +55,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
    - The boundary line between Java and Kotlin (see [JVM guide chapter 03](../kotlin-jvm/03-jvm-frameworks.md)) — and even there, prefer `requireNotNull(value) { "context" }`.
 4. **Lint rule:** detekt's `UnsafeCallOnNullableType` set to error in CI.
 
+**Enforcement:** detekt `UnsafeCallOnNullableType` at error in CI; justified bridges carry a why-comment.
+
 ### 3.3 — Resolve nullability at the boundary, not at the call site.
 
 **Reasoning, step by step:**
@@ -30,6 +64,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 2. Resolve as close to the *origin* as possible: parse the input, validate, and convert `T?` to `T` (or to a sealed result type) at the adapter layer.
 3. The body of the function should operate on non-null values — that's the whole point of the type system.
 4. **Anti-pattern:** every internal function takes `User?` and re-checks with `?.let`. The check belongs at the input boundary; internal functions take `User`.
+
+**Enforcement:** review; reject internal signatures that take `T?` where the boundary already resolved it.
 
 ### 3.4 — Prefer Elvis (`?:`) with a meaningful default or `error(...)`.
 
@@ -39,6 +75,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 3. For "this is the caller's contract": `val name = requireNotNull(user.name) { "name required" }`. Throws `IllegalArgumentException`, which is the right exception for a contract violation.
 4. Elvis chains read well: `cache[key] ?: load(key) ?: error("no $key")`. Use them.
 
+**Enforcement:** review; an Elvis default or `error(...)`/`requireNotNull` resolves the null, never `!!`.
+
 ### 3.5 — Smart casts: lean on them; don't fight them.
 
 **Reasoning, step by step:**
@@ -46,6 +84,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 2. Smart casts fail on `var` properties of mutable classes and on `open`/`abstract` properties — because another thread or override could change them between the check and the use. The compiler is right; don't argue.
 3. **Fix:** copy to a local `val` first. `val u = user ?: return; useUser(u)` — now `u` is smart-cast to `User` for the rest of the function.
 4. Smart casts also work in `when` arms. Lean on this for sealed hierarchies.
+
+**Enforcement:** compiler; copy a mutable nullable to a local `val` so the smart cast holds, no `!!` to defeat it.
 
 ### 3.6 — `lateinit` is for genuine framework injection only. Never for "I'll set it later in my own code."
 
@@ -55,6 +95,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 3. Illegitimate uses: working around constructor parameters being inconvenient. If you're doing this, the type should be `T?` and you should resolve to `T` explicitly, or the value should be `by lazy` (see 3.7).
 4. `lateinit` cannot be `val`, cannot be a primitive (`Int`, `Long`), and cannot be nullable — all by design.
 
+**Enforcement:** review; `lateinit` only for framework/test injection, otherwise `by lazy` or an explicit `T?`.
+
 ### 3.7 — `by lazy` for deferred non-null initialization driven by *your* code.
 
 **Reasoning, step by step:**
@@ -63,12 +105,16 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 3. Prefer `by lazy` over `lateinit var` when you control when initialization happens. Reserve `lateinit var` for *external* initializers (frameworks, tests).
 4. **Trap:** `by lazy` captures the enclosing `this`. If the holder leaks before the lazy runs, the captured references leak too. Be mindful in long-lived holders.
 
+**Enforcement:** review; `by lazy` for self-driven deferral, with the thread-safety mode justified when not the default.
+
 ### 3.8 — `Optional<T>` does not exist in Kotlin. Don't import it.
 
 **Reasoning, step by step:**
 1. The Kotlin answer to `Optional<T>` is `T?`. The language gives you the same expressiveness without the box.
 2. The only acceptable place to see `Optional` is at a Java boundary you don't control (see [JVM guide](../kotlin-jvm/01-java-interop.md)). Convert to `T?` at that boundary.
 3. Returning `Optional<T>` from a Kotlin function is wrong twice: it allocates a box, and it contradicts the nullability type system.
+
+**Enforcement:** review; ban `java.util.Optional` in Kotlin signatures, convert to `T?` at the Java boundary.
 
 ### 3.9 — Public API: nullability annotations match intent and stay stable.
 
@@ -78,6 +124,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 3. Don't tighten nullable parameters to non-null without a deprecation period — old callers may be passing null on purpose.
 4. **Migration pattern:** add a new function with the better signature, deprecate the old one, deletion in a later release.
 
+**Enforcement:** review; binary-compatibility check on public nullability, tighten only behind a deprecation cycle.
+
 ### 3.10 — `requireNotNull` and `checkNotNull` over manual null checks + throws.
 
 **Reasoning, step by step:**
@@ -85,6 +133,8 @@ Nullability is the single most-improved part of Kotlin over Java. Use it. Disres
 2. `requireNotNull` throws `IllegalArgumentException` — semantically: *the caller passed bad input*.
 3. `checkNotNull` throws `IllegalStateException` — semantically: *our state is inconsistent*.
 4. Choosing between them documents whose fault the null is. That's worth typing the extra letters for.
+
+**Enforcement:** review; `requireNotNull` for bad input and `checkNotNull` for inconsistent state, not a hand-rolled `if`/`throw`.
 
 ## Worked examples
 

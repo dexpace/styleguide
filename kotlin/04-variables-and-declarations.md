@@ -2,6 +2,27 @@
 
 How values come into being and how long they live. Most bugs you've ever shipped started as a `var` that should have been a `val` or a global that should have been a parameter.
 
+## What good looks like
+
+```kotlin
+private const val MAX_RETRIES = 3                                  // 4.4 — compile-time constant, SCREAMING_SNAKE
+private val isoFormatter: DateTimeFormatter = DateTimeFormatter.ISO_INSTANT // 4.4, 4.6 — runtime constant, top-level
+
+class PriceBook(
+    private val rates: Map<Currency, BigDecimal>,                  // 4.2 — read-only collection in the API
+) {
+    private val cache: Map<Currency, BigDecimal> by lazy { buildCache() } // 4.7 — deferred init via delegation
+
+    fun convert(amount: Money, into: Currency): Money {           // 4.3 — explicit public return type
+        val rate = rates[into] ?: error("no rate for $into")     // 4.1 — val, inferred local
+        val (whole, fraction) = amount.split()                    // 4.8 — destructure a positional data class
+        return Money(whole * rate, fraction, into)
+    }
+}
+```
+
+`MAX_RETRIES` is a `const val` and `isoFormatter` a top-level runtime `val` (4.4), neither hidden in a utility class (4.6). `rates` is exposed as a read-only `Map` (4.2); every binding is a `val` (4.1) with the public method declaring its return type while locals infer theirs (4.3); `cache` defers its build through `by lazy` (4.7); and the endpoint splits by positional destructuring (4.8) — one declaration per line throughout (4.10).
+
 ## Rules
 
 ### 4.1 — `val` over `var`. Mutate only when it provably matters.
@@ -12,6 +33,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 3. Default to `val`. Reach for `var` only when (a) accumulation in a loop is genuinely clearer than `fold`/`reduce`, or (b) you're working with mutable framework state that has no fluent alternative.
 4. Lint: detekt's `VarCouldBeVal` set to error.
 
+**Enforcement:** detekt `VarCouldBeVal` at error; review for the two sanctioned `var` cases.
+
 ### 4.2 — Immutable collection types over mutable. `List` over `MutableList`.
 
 **Reasoning, step by step:**
@@ -20,6 +43,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 3. Public APIs that return `List<T>` (not `MutableList<T>`) signal "you can read; don't try to mutate."
 4. **Note:** Kotlin's `List<T>` is a *view* — the underlying object may still be mutable, and another holder could change it. For genuinely-frozen lists, copy to `List<T>.toList()` at the boundary, or use `kotlinx.collections.immutable` for truly immutable structures when sharing across threads.
 5. `listOf`/`setOf`/`mapOf` over `mutableListOf`/`mutableSetOf`/`mutableMapOf`. Mutability is what you have to type — that's the right way around.
+
+**Enforcement:** review; public signatures declare read-only collection types, `Mutable*` confined to local scope.
 
 ### 4.3 — Type inference: yes for locals, explicit for public API.
 
@@ -30,6 +55,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 4. Complex generic inferences (`val xs = listOf(1, 2L, 3.0)` infers `List<Number>` which surprises) — write the type.
 5. Trade-off: in test code, inference can be more liberal because the function body is right there.
 
+**Enforcement:** detekt `LibraryEntitiesShouldNotBePublic`/explicit-API mode for public types; review elsewhere.
+
 ### 4.4 — `const val` for compile-time constants; top-level `val` for runtime constants.
 
 **Reasoning, step by step:**
@@ -37,6 +64,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 2. Top-level `val` (no `const`) is a singleton initialized at class-load time. It can be any type, including a `List`, a `Regex`, or a lazily-built map.
 3. Convention: `const val SCREAMING_SNAKE_CASE` only. Lowercase `const val` is allowed by the compiler but looks like a regular local and reads as a bug.
 4. Top-level non-const `val`: camelCase if it's a "namespaced singleton" (`defaultClock`), SCREAMING_SNAKE_CASE only if it's a *value constant* (`MAX_RETRIES`).
+
+**Enforcement:** detekt naming rules (`ConstantNaming`/`TopLevelPropertyNaming`); review the const-vs-runtime split.
 
 ### 4.5 — `companion object` for class-scoped constants and factories. No more.
 
@@ -46,6 +75,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 3. Each class has at most one `companion object`. If you find yourself wanting more, you wanted a separate file.
 4. Named companions (`companion object Factory`) only when you need to reference the companion by name from Java callers — see [JVM guide](../kotlin-jvm/01-java-interop.md).
 
+**Enforcement:** review; `companion object` holds only constants and factories, utilities live top-level.
+
 ### 4.6 — Top-level functions and properties, not utility classes.
 
 **Reasoning, step by step:**
@@ -53,6 +84,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 2. Group related top-level functions by feature in one file (`Json.kt`, `TimeFormat.kt`).
 3. Extension functions on the receiver type are usually even better — they're discoverable via IDE completion.
 4. **Counter-example:** if a "utility" needs internal state (a cache, a parser, a config), it's not a utility — it's an object. Make it a `class` injected as a dependency.
+
+**Enforcement:** detekt `UtilityClassWithPublicConstructor`; review for stateless `object`s that should be top-level.
 
 ### 4.7 — Delegation (`by`) for backing properties.
 
@@ -63,6 +96,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 4. Custom delegates: implement `getValue`/`setValue` operator functions. Build them when (a) the same backing pattern appears in three or more properties, and (b) the pattern can't be expressed as a regular function.
 5. **Anti-pattern:** custom delegate where a `val` + private helper function would work. Delegation is for backing-field discipline, not for compressing one-liners.
 
+**Enforcement:** review; custom delegates justified by the three-or-more-property threshold.
+
 ### 4.8 — Destructuring for `Pair`/data classes — and only there.
 
 **Reasoning, step by step:**
@@ -70,6 +105,8 @@ How values come into being and how long they live. Most bugs you've ever shipped
 2. Destructuring uses *positional* `componentN()` accessors. Reordering data-class fields silently breaks every destructuring call site. This is a feature, not a bug — but it means destructuring is fragile for types you don't control.
 3. **Rule:** destructure your own data classes only when positional access is the natural reading order. For random data classes (a `User` with 12 fields), use named property access.
 4. Loops: `for ((key, value) in map) { ... }` is idiomatic; keep it.
+
+**Enforcement:** review; destructuring confined to positional own-types and map iteration.
 
 ### 4.9 — Initializer blocks: rare and explained.
 
@@ -79,12 +116,16 @@ How values come into being and how long they live. Most bugs you've ever shipped
 3. Avoid multiple `init` blocks per class. Multiple blocks execute in source order, which is invisible to anyone reading the class.
 4. Long `init` blocks are a sign that a factory function is the right pattern instead.
 
+**Enforcement:** review; at most one `init` block, reserved for cross-parameter setup or precondition checks.
+
 ### 4.10 — One declaration per `val`/`var` line.
 
 **Reasoning, step by step:**
 1. Kotlin doesn't support `val a, b = 0, 0`-style multi-declarations, and that's good. Don't simulate it with destructuring of a fake `Pair`.
 2. One line per declaration aids diffs and grep.
 3. Exception: `for ((k, v) in map)` — that's a single destructuring declaration with a clear purpose.
+
+**Enforcement:** review; one declaration per line, no simulated multi-declarations via `Pair`.
 
 ## Worked example
 

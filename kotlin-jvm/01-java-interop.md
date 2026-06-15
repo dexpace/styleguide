@@ -2,6 +2,40 @@
 
 If a public Kotlin symbol can be called from Java, *its bytecode* is the API. The Kotlin source is just one of two views.
 
+## What good looks like
+
+```kotlin
+@file:JvmName("Statuses") // Java sees Statuses.fromCode(...), not StatusesKt
+
+package com.acme.orders
+
+import org.jspecify.annotations.Nullable
+
+enum class Status(val code: Int) {
+    OPEN(1), CLOSED(2);
+
+    companion object {
+        @JvmStatic
+        @Throws(IllegalArgumentException::class) // Java callers must handle this checked-style throw
+        fun fromCode(code: Int): Status = entries.find { it.code == code }
+            ?: throw IllegalArgumentException("Invalid status code: $code")
+    }
+}
+
+class StatusGateway(private val source: JavaStatusSource) {
+    // Pin the platform type at the boundary: null here is a contract violation, so fail loud.
+    fun current(): Status {
+        val raw: Int = source.readCode() // explicit type turns String!/int! into a checked assignment
+        return Status.fromCode(raw)
+    }
+
+    // Java annotated @Nullable → Kotlin sees String?, so the optional flow is type-checked, not platform.
+    fun label(): String? = source.optionalLabel()
+}
+```
+
+This file renames its synthetic class for Java (1.5) and exposes `fromCode` as a real static (1.1) that declares its checked throw (1.8). `current()` pins the Java `int!` to an explicit `Int` at the boundary so a bad value fails loud at the assignment (1.6), while `label()` rides a JSpecify `@Nullable` that Kotlin reads as `String?` (1.7). No `@JvmField`/`@JvmOverloads` appear because nothing here demands a field (1.3) or a default-argument overload set (1.2).
+
 ## Rules
 
 ### 1.1 — `@JvmStatic` on companion-object methods Java callers will use.
@@ -21,6 +55,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
    ```
 5. **Cost:** `@JvmStatic` generates an extra method on the enclosing class delegating to the companion. ABI-stable; cost is negligible.
 
+**Enforcement:** `javap -p` on the enclosing class shows the static; review that companion factories reached by Java carry `@JvmStatic`.
+
 ### 1.2 — `@JvmOverloads` on default-argument functions exposed to Java callers or reflection.
 
 **Reasoning, step by step:**
@@ -29,6 +65,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 3. Apply to: constructors of Spring/JPA classes with default args, public functions in libraries.
 4. **Anti-pattern:** sprinkling `@JvmOverloads` on every default-arg function. Apply only where Java/reflection callers exist.
 5. Verify with `javap -p`. The generated overloads should be exactly what you expect.
+
+**Enforcement:** `javap -p` confirms the overload set; review that `@JvmOverloads` lands only on default-arg symbols with Java/reflection callers.
 
 ### 1.3 — `@JvmField` is a limited tool, not a default. Reach for it only when Java demands a field.
 
@@ -42,6 +80,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 4. **Anti-pattern:** `@JvmField` on every property of a data class for "interop." Default Kotlin properties + generated getters work fine for Java.
 5. Inside `companion object`: `@JvmField` exposes a constant as a static *field* (`MyClass.CONSTANT` from Java instead of `MyClass.Companion.getCONSTANT()`). `@JvmStatic` exposes a method as a static method. Pick by whether the Java side reads a field or calls a method.
 
+**Enforcement:** review; each `@JvmField` cites the Java-side requirement for a real field, and default data-class properties carry no `@JvmField`.
+
 ### 1.4 — `@JvmName` to give Kotlin and Java distinct names for the same function.
 
 **Reasoning, step by step:**
@@ -50,6 +90,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 3. Also useful for extension functions that would otherwise have ugly mangled names.
 4. **Pattern:** keep the Kotlin call site idiomatic; rename the Java call site for clarity.
 
+**Enforcement:** `javap -p` shows the Java-visible name; review that return-type-only overloads and mangled extensions carry `@JvmName`.
+
 ### 1.5 — `@file:JvmName` to name the synthetic class for top-level declarations.
 
 **Reasoning, step by step:**
@@ -57,6 +99,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 2. `@file:JvmName("Util")` at the top of `Util.kt` renames the class to `Util`. Java does `Util.foo(...)`.
 3. Apply to every file with public top-level declarations consumed by Java.
 4. `@file:JvmMultifileClass` combines multiple Kotlin files into one Java-visible class — useful for splitting a large utility class across files.
+
+**Enforcement:** review; every file with public top-level declarations consumed by Java opens with `@file:JvmName`, verified by `javap` on the synthetic class.
 
 ### 1.6 — Platform types: pin them at the boundary.
 
@@ -67,6 +111,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 4. Prefer the latter when the Java side genuinely returns null in any flow. Prefer the former with a follow-up `?: error("...")` when null is a contract violation.
 5. **Lint:** detekt's `PlatformType` rule on `internal`/`public` function return types.
 
+**Enforcement:** detekt `PlatformType` flags unpinned platform types; review that every Java-Kotlin boundary value gets an explicit `String`/`String?` type.
+
 ### 1.7 — JSR-305 / Jakarta nullability annotations on Java boundary code.
 
 **Reasoning, step by step:**
@@ -75,6 +121,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 3. If you own the Java side too, annotate it. The Kotlin compiler then enforces nullability across the boundary.
 4. Recommended annotation source for new code: **JSpecify** (`org.jspecify.annotations`). It's the emerging standard and Kotlin 2.x supports it well.
 5. Configure the compiler with `-Xjsr305=strict` (or the JSpecify equivalent) to treat unmarked Java types as platform types but warn or error on misuse.
+
+**Enforcement:** `-Xjsr305=strict` in the compiler args; review that owned Java boundary code carries JSpecify nullability annotations.
 
 ### 1.8 — `@Throws` for checked exceptions consumed by Java callers.
 
@@ -90,6 +138,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
    fun fromCode(code: Int): Status = /* ... */
    ```
 
+**Enforcement:** review; `@Throws` annotates functions designed for Java to catch, not every throw site, confirmed against the bytecode signature.
+
 ### 1.9 — `internal` and Java: the name is mangled.
 
 **Reasoning, step by step:**
@@ -97,6 +147,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 2. Java code in the same module *can* call `internal` Kotlin functions, but it must use the mangled name — unpleasant and brittle.
 3. **Rule:** don't expose `internal` symbols to Java. If a Java caller needs it, make it `public` and document the contract; if it's truly module-private, keep Java out.
 4. Cross-module Java callers cannot call `internal` Kotlin code. That's the whole point.
+
+**Enforcement:** review; symbols a Java caller needs are `public` with a documented contract, never `internal` reached by its mangled name.
 
 ### 1.10 — Interface default methods: `-Xjvm-default=all` for new modules, `all-compatibility` for published libraries.
 
@@ -110,6 +162,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 4. Apply at the *module* level (in `compileOptions.freeCompilerArgs` or the `kotlin { compilerOptions { ... } }` DSL). Don't sprinkle `@JvmDefault` annotations — those were deprecated in favor of the compiler flag.
 5. Verify with `javap` on a representative interface after a build to confirm default methods are present.
 
+**Enforcement:** `-Xjvm-default=all` (or `all-compatibility` for published libraries) set at the module level; `javap` confirms the default methods, no scattered `@JvmDefault`.
+
 ### 1.11 — Constructors with default args + Spring/JPA: pair with `@JvmOverloads` and the compiler plugin.
 
 **Reasoning, step by step:**
@@ -119,6 +173,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 4. **The wrong fix:** writing `constructor() : this(0, "")` by hand. Rots, gets forgotten on new classes, and lies about the data class's invariants.
 5. See [chapter 04](./04-persistence.md).
 
+**Enforcement:** review; `@Entity`/`@Embeddable` classes with default args rely on the `kotlin-jpa`/`kotlin-noarg` plugin, never a hand-written no-arg constructor.
+
 ### 1.12 — `lateinit var` for framework injection only, with KDoc explaining the lifecycle.
 
 **Reasoning, step by step:**
@@ -126,6 +182,8 @@ If a public Kotlin symbol can be called from Java, *its bytecode* is the API. Th
 2. Generic guide §3.6 forbids `lateinit` for "I'll set it later in my own code." That ban stands. Framework injection is the documented exception.
 3. KDoc the lifecycle: `/** Injected by Spring. Available after bean initialization. */`.
 4. Prefer constructor injection where the framework supports it (Spring does, since 4.3). `lateinit` is the fallback when the framework forces field injection (e.g., legacy `@Autowired` on a field that can't be in the constructor).
+
+**Enforcement:** review; `lateinit var` appears only for framework injection and carries KDoc naming the injector and lifecycle, per generic guide §3.6.
 
 ## Worked example
 

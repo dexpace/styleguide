@@ -2,6 +2,56 @@
 
 Python makes classes easy. We make most of them dataclasses, most contracts Protocols, and most "inheritance for reuse" something else.
 
+## What good looks like
+
+```python
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Literal, Protocol, assert_never
+
+
+class Currency(StrEnum):
+    USD = "USD"
+    EUR = "EUR"
+
+
+@dataclass(frozen=True, slots=True)
+class Money:
+    minor_units: int
+    currency: Currency
+
+    def __post_init__(self) -> None:
+        if self.minor_units < 0:
+            raise ValueError("Money must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class Approved:
+    receipt_id: str
+    kind: Literal["approved"] = "approved"
+
+@dataclass(frozen=True, slots=True)
+class Declined:
+    reason: str
+    kind: Literal["declined"] = "declined"
+
+ChargeResult = Approved | Declined
+
+
+class PaymentGateway(Protocol):
+    async def charge(self, amount: Money) -> ChargeResult: ...
+
+
+async def settle(gateway: PaymentGateway, amount: Money) -> str:
+    result = await gateway.charge(amount)
+    match result:
+        case Approved(receipt_id=rid): return rid
+        case Declined(reason=why): raise RuntimeError(why)
+        case _: assert_never(result)
+```
+
+`Money` is a `frozen=True, slots=True` value type validating its invariant in `__post_init__` (6.1, 6.6); the non-defaulted fields precede the defaulted `kind` discriminator in every variant; `Currency` is a `StrEnum` closed set (6.2); `ChargeResult` is a `Literal`-discriminated union narrowed by an exhaustive `match` with `assert_never` (6.4); `PaymentGateway` is a `Protocol`, so `settle` depends on a shape, not a base class (6.3, 6.5).
+
 ## Rules
 
 ### 6.1 — `@dataclass(frozen=True, slots=True)` for value-shaped types.
@@ -23,6 +73,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
                raise ValueError("UserId must be non-empty")
    ```
 
+**Enforcement:** review; value-shaped types carry `frozen=True, slots=True`, no hand-written `__init__`/`__eq__`/`__hash__`.
+
 ### 6.2 — `enum.Enum` (or `StrEnum`/`IntEnum`) for closed sets.
 
 **Reasoning, step by step:**
@@ -31,6 +83,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 3. `enum.IntEnum` for integer-valued sets (HTTP status codes, OS signal numbers).
 4. Plain `enum.Enum` for sets where values are arbitrary tokens.
 5. **Anti-pattern:** stringly-typed constants (`STATUS_ACTIVE = "active"`). Use an enum. mypy + IDE completion both win.
+
+**Enforcement:** mypy rejects an out-of-set literal where the enum is expected; review flags stringly-typed constant clusters.
 
 ### 6.3 — `Protocol` over ABC. Inheritance only when it's actually shared behavior.
 
@@ -41,6 +95,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 4. **Choose ABC when:** you need shared *implementation* in the base, or you need `isinstance` checks to work at runtime (use `@runtime_checkable` on a Protocol if you only need that).
 5. From the broader principle: prefer composition over inheritance. Inheritance is reserved for genuine "is-a" relationships and *shared implementation* (chapter 06 §6.4 of the Kotlin guide makes the same case).
 
+**Enforcement:** review; `Protocol` for dependency-inversion seams, ABC reserved for shared implementation or `isinstance` needs.
+
 ### 6.4 — Sum types: `Literal` discriminator + union, or sealed-class-style hierarchies.
 
 **Reasoning, step by step:**
@@ -49,13 +105,13 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
      ```python
      @dataclass(frozen=True, slots=True)
      class Approved:
-         kind: Literal["approved"] = "approved"
          receipt: Receipt
+         kind: Literal["approved"] = "approved"
 
      @dataclass(frozen=True, slots=True)
      class Declined:
-         kind: Literal["declined"] = "declined"
          reason: str
+         kind: Literal["declined"] = "declined"
 
      ChargeResult = Approved | Declined
      ```
@@ -72,6 +128,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
    Adding a new variant fails the type check until you add a case.
 3. For a fixed set of *behaviors* (not just data), an ABC with two subclasses works too. Pick by whether the variants share methods or just shapes.
 
+**Enforcement:** mypy's `assert_never` fails the type check when a new variant is added without a `match` case.
+
 ### 6.5 — No inheritance for code reuse. Use composition + Protocol.
 
 **Reasoning, step by step:**
@@ -81,6 +139,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 4. **Acceptable inheritance:** (a) extending stdlib/framework classes when forced (`Exception`, `Enum`, ABCs you're implementing), (b) sealed-style hierarchies where the variants share the parent as a tag, (c) genuinely shared implementation with a single subclass-author audience.
 5. **Anti-pattern:** `class UserService(BaseService): ...` where `BaseService` exists only because three services happened to need a logger. Inject the logger.
 
+**Enforcement:** review; reject `Base*`/`Abstract*` parents that exist only to share a dependency rather than model an "is-a".
+
 ### 6.6 — Constructors: simple, single-purpose, raise on invalid input.
 
 **Reasoning, step by step:**
@@ -89,12 +149,16 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 3. For complex creation: use a classmethod factory (`User.from_dict(...)`, `Config.load(...)`). Document side effects in the factory's docstring.
 4. **Pattern:** dataclasses with `__post_init__` for validation. Regular classes with `__init__` for everything else.
 
+**Enforcement:** review; no I/O in `__init__`/`__post_init__`, invariants validated and raised at construction.
+
 ### 6.7 — `@classmethod` and `@staticmethod`: pick by what `self`/`cls` you need.
 
 **Reasoning, step by step:**
 1. `@classmethod` receives the class as `cls`. Use for: alternative constructors (`from_json`, `from_dict`, `default`), factory methods that need to know the subclass.
 2. `@staticmethod` receives nothing. Use for: utility functions that *belong* to the class namespace but don't need `self` or `cls`. Honestly, this is rare — usually a module-level function is better.
 3. **Anti-pattern:** `@staticmethod` for what should be a top-level function. The class wrapping adds nothing.
+
+**Enforcement:** review; `@classmethod` only where `cls` is used, `@staticmethod` only where the class namespace earns its place over a module function.
 
 ### 6.8 — Multiple inheritance: avoid; if necessary, use mixins with clear MRO.
 
@@ -104,6 +168,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 3. Diamond inheritance (two parents share a grandparent) usually means you should be composing instead.
 4. **Lint:** detekt-equivalent doesn't exist for this in Python tooling, but the rule stands. Code review catches it.
 
+**Enforcement:** review; multiple inheritance limited to small orthogonal mixins, diamonds rejected in favor of composition.
+
 ### 6.9 — Dunders: implement only the ones you mean. Don't go overboard.
 
 **Reasoning, step by step:**
@@ -111,6 +177,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 2. Implement them when your class *is* that thing. `__iter__` if your class is iterable. `__len__` if it has a meaningful length.
 3. **Anti-pattern:** implementing `__add__` because "it might be useful." Operator overloading is for types where the operation reads naturally — `Vector + Vector`, `Duration + Duration`. Not `User + Order`.
 4. Keep dunders consistent: if you implement `__eq__`, you almost always need `__hash__`. Mismatch breaks Python's contracts (e.g., set membership).
+
+**Enforcement:** review; a dunder appears only when the class genuinely *is* that protocol, and `__eq__`/`__hash__` stay paired.
 
 ### 6.10 — `NamedTuple` vs `dataclass` vs `TypedDict`: pick by use case.
 
@@ -120,6 +188,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 3. **`TypedDict`** — when the value is a *dict* (JSON shape, kwargs bag, config). No methods, no constructor logic.
 4. Pick by the consumer's needs: do they index, unpack, mutate, or pattern-match? Each implies a different choice.
 
+**Enforcement:** review; the carrier matches the consumer — `dataclass` by default, `NamedTuple` for positional/tuple use, `TypedDict` for dict shapes.
+
 ### 6.11 — Properties for derived state. Direct attributes for stored state.
 
 **Reasoning, step by step:**
@@ -128,6 +198,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 3. Don't fake encapsulation with getter/setter methods. Python has properties for a reason.
 4. Don't add a property "in case we need it later." YAGNI — and the moment you do need it, change the attribute to a property; callers don't see the difference.
 
+**Enforcement:** review; derived state is a `@property`/`@cached_property`, stored state is a plain attribute, no getter/setter method pairs.
+
 ### 6.12 — `__hash__` and equality: consistent or absent.
 
 **Reasoning, step by step:**
@@ -135,6 +207,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 2. `@dataclass(frozen=True)` generates a consistent `__eq__` + `__hash__`. Use it.
 3. `@dataclass(eq=False)` falls back to identity equality (`is`). Useful for entities where two records with the same fields *aren't* equal because they have different identities (databases, sessions).
 4. The Python rule: equal objects must have equal hashes. Breaking this corrupts dicts and sets — silently. Use `frozen=True` and forget about it.
+
+**Enforcement:** review; equality and hashing come from `frozen=True` or are deliberately absent (`eq=False` for identity), never inconsistently hand-rolled.
 
 ### 6.13 — Factory `@classmethod`s over polymorphic constructors.
 
@@ -180,6 +254,8 @@ Python makes classes easy. We make most of them dataclasses, most contracts Prot
 7. **Anti-pattern:** `def __init__(self, endpoint=None, conn_str=None, url=None): ... if conn_str: ...; elif url: ...`. The signature is a lie and mypy can't help.
 8. Return type `Self` (Python 3.11+) — subclass factories return the subclass naturally.
 
+**Enforcement:** review; multi-source construction goes through named `@classmethod` factories returning `Self`, not an `__init__` with optional sentinel arguments.
+
 ## Worked example
 
 ```python
@@ -205,13 +281,13 @@ class UserId:
 
 @dataclass(frozen=True, slots=True)
 class Approved:
-    kind: Literal["approved"] = "approved"
     receipt_id: str
+    kind: Literal["approved"] = "approved"
 
 @dataclass(frozen=True, slots=True)
 class Declined:
-    kind: Literal["declined"] = "declined"
     reason: str
+    kind: Literal["declined"] = "declined"
 
 ChargeResult = Approved | Declined
 

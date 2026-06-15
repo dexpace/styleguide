@@ -107,7 +107,9 @@ function run(job: unknown): Promise<unknown> {
 
 ```ts
 import { pipeline } from 'node:stream/promises';
-for await (const chunk of req.body!) sink.write(chunk); // Web Stream: await is the backpressure pause (Bun.serve body)
+const body = c.req.raw.body;
+if (body === null) return c.json({ error: 'missing body' }, 400); // no stream to back-pressure against
+for await (const chunk of body) sink.write(chunk); // Web Stream: await is the backpressure pause (Bun.serve body)
 await pipeline(src, createGunzip(), parseNdjson(), writeToSink(), { signal }); // node:stream: backpressure + errors across all stages
 src.pipe(sink); // bad: no error path, no teardown on failure — a leak and a swallowed error
 ```

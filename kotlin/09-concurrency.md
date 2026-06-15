@@ -4,6 +4,34 @@ Concurrency is where Kotlin's design earns its keep. Structured concurrency make
 
 This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel`, `Mutex`, atomics). JVM-specific concerns (virtual threads / Loom, Reactor, `CompletableFuture` interop, `ThreadLocal`/MDC) live in [JVM guide chapter 02](../kotlin-jvm/02-jvm-concurrency.md).
 
+## What good looks like
+
+```kotlin
+/** Fetches a user and its orders in parallel, bounded by a timeout. Dispatcher-agnostic. */
+suspend fun loadDashboard(userId: UserId): Dashboard = coroutineScope {
+    val user = async { userRepo.find(userId) }       // 9.11 concurrent work, results combined
+    val orders = async { orderRepo.findFor(userId) }
+    Dashboard(user.await(), orders.await())          // 9.3 both complete before the scope returns
+}
+
+class OrderService(private val orderRepo: OrderRepo) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default) // 9.1 owned, cancellable
+
+    /** Bounds the I/O call; stays off any caller-chosen dispatcher. */
+    suspend fun place(order: Order): Receipt = withTimeout(5.seconds) { // 9.5 every I/O call is bounded
+        try {
+            orderRepo.persist(order)                  // 9.2 suspend body picks no dispatcher
+        } catch (e: CancellationException) {
+            throw e                                   // 9.4 cancellation is rethrown, never swallowed
+        }
+    }
+
+    fun shutdown() = scope.cancel() // 9.1 explicit lifecycle end
+}
+```
+
+`loadDashboard` runs two fetches with `async` and joins them under `coroutineScope`, so both children finish before it returns (9.11, 9.3). `OrderService` owns an explicit, cancellable scope rather than `GlobalScope` (9.1), keeps its `suspend` body dispatcher-agnostic (9.2), bounds the external call with `withTimeout` (9.5), and rethrows `CancellationException` before any other handling (9.4).
+
 ## Rules
 
 ### 9.1 — Every coroutine has an explicit `CoroutineScope`. No `GlobalScope`.
@@ -15,6 +43,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 4. Forbidden: `GlobalScope`, top-level `runBlocking` outside `main()`/tests, fire-and-forget launches that escape the enclosing function.
 5. **Acceptable scope sources:** `coroutineScope { ... }` inside a `suspend` function, `withContext(ctx) { ... }` for dispatcher switching, a `CoroutineScope` field on a service class (with explicit `cancel()` on shutdown).
 
+**Enforcement:** Detekt `GlobalCoroutineUsage`; review for stray `runBlocking` and escaping launches.
+
 ### 9.2 — `suspend` functions are pure with respect to threading. Don't pick a dispatcher inside them.
 
 **Reasoning, step by step:**
@@ -23,6 +53,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 3. The caller knows the threading context. Don't take it away from them.
 4. **Exception:** if the function calls a blocking library and there's no async alternative, `withContext(Dispatchers.IO)` is the boundary. Even there, prefer wrapping at the *adapter* level — make the suspend function dispatcher-agnostic.
 
+**Enforcement:** review; flag `withContext(Dispatchers.X)` wrapping a whole `suspend` body that owns no thread-affine resource.
+
 ### 9.3 — Structured concurrency: launches inside a scope must complete before the scope returns.
 
 **Reasoning, step by step:**
@@ -30,6 +62,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 2. This means: when a `suspend` function returns, *all its work is done*. There's no orphan coroutine running in the background.
 3. **Anti-pattern:** `viewModelScope.launch { ... }` (or any external scope) from inside a function as a side effect. The work outlives the function; the caller can't see it.
 4. If you need fire-and-forget semantics, that's a *different* coroutine on a *different* scope (typically a service-level one). Document it. Name the scope.
+
+**Enforcement:** review; no `externalScope.launch` as a side effect inside a `suspend` function.
 
 ### 9.4 — Cancellation is cooperative. Honor it.
 
@@ -40,6 +74,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 4. `runCatching { ... }` inside a coroutine is dangerous for the same reason. If you use it, handle `CancellationException` explicitly.
 5. **Pattern:** `try { ... } catch (e: CancellationException) { throw e } catch (e: Exception) { /* handle */ }`.
 
+**Enforcement:** Detekt `SwallowedException`/`TooGenericExceptionCaught`; review `runCatching` in suspend code for `CancellationException` handling.
+
 ### 9.5 — `withTimeout` is the bound on every `suspend` call that does I/O.
 
 **Reasoning, step by step:**
@@ -47,6 +83,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 2. Wrap external calls in `withTimeout(...) { ... }` or `withTimeoutOrNull(...) { ... }`. Pick a number; document the choice.
 3. The timeout should match the *user-perceived* SLA, not "infinity minus a bit." Aggressive timeouts surface real problems; lenient ones hide them.
 4. `withTimeoutOrNull` returns `null` on timeout; `withTimeout` throws `TimeoutCancellationException` (a `CancellationException` — see 9.4). Pick by whether the caller wants to branch or fail.
+
+**Enforcement:** review; every external I/O call sits inside a `withTimeout`/`withTimeoutOrNull` with a documented bound.
 
 ### 9.6 — Dispatchers: `Dispatchers.Default` for CPU, `Dispatchers.IO` for blocking, custom for tightly-managed pools.
 
@@ -57,6 +95,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 4. For tightly-managed pools (DB connection-bound work, a third-party SDK with its own concurrency rules), construct a custom `CoroutineDispatcher` from an `Executor`. Document the pool's size and the reason.
 5. Switching dispatchers costs (a context switch); don't switch needlessly inside tight loops.
 
+**Enforcement:** review; CPU work on `Default`, blocking on `IO`, custom pools carry a documented size and reason.
+
 ### 9.7 — `Flow` for cold streams; `SharedFlow`/`StateFlow` for hot.
 
 **Reasoning, step by step:**
@@ -65,6 +105,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 3. Default to `Flow`. Reach for `SharedFlow` when (a) the producer is expensive and you want fan-out, or (b) you need replay/buffering for late subscribers.
 4. `StateFlow<T>` is a `SharedFlow<T>` with exactly one current value. Use it for observable state (config, current user, current selection).
 5. **Anti-pattern:** `Flow` carrying mutable state. Each collector gets a fresh run, but if the flow captures a `MutableList`, you've created a shared-state hazard.
+
+**Enforcement:** review; cold `Flow` by default, hot `SharedFlow`/`StateFlow` only for fan-out or observable state, no mutable captures.
 
 ### 9.8 — `buffer()`, `conflate()`, `collectLatest` — pick deliberately, never unbounded.
 
@@ -75,6 +117,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 4. `collectLatest { ... }` cancels the in-progress collector when a new value arrives. Use when each value triggers async work and only the latest matters.
 5. **Limits-on-everything rule (TigerBeetle):** every buffer has a fixed bound. State the bound near the call site, ideally as a named constant.
 
+**Enforcement:** review; no `buffer()` without an explicit capacity, every bound stated as a named constant.
+
 ### 9.9 — Concurrent state: `Mutex` for coroutines, `AtomicXxx` for primitives.
 
 **Reasoning, step by step:**
@@ -84,6 +128,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 4. **Prefer the immutable-update pattern:** `state.update { it.copy(x = newX) }` over a lock around a mutable field.
 5. Bound the lock's hold time. A `Mutex` held during an I/O call is a sequential bottleneck.
 
+**Enforcement:** review; `Mutex`/atomics or immutable-update for shared state, no `synchronized` in suspend code, no I/O under a held lock.
+
 ### 9.10 — `Channel` only when `Flow` doesn't fit.
 
 **Reasoning, step by step:**
@@ -91,6 +137,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 2. Most "channel" use cases are actually flow use cases. If multiple consumers should see each value, use `SharedFlow`. If exactly one consumer, often `Flow.collect` is enough.
 3. Acceptable `Channel` use: actor patterns (a single consumer with sequential processing), backpressure-aware producer-consumer pairs.
 4. Always bound: `Channel(capacity = 16)`. Never `Channel(Channel.UNLIMITED)` in production.
+
+**Enforcement:** review; `Channel` justified over `Flow`, every `Channel` carries an explicit capacity, no `Channel.UNLIMITED`.
 
 ### 9.11 — `async { }` only when you genuinely need concurrent results.
 
@@ -101,6 +149,8 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 4. **Anti-pattern:** `async` to "fire and forget." That's `launch` — and even `launch` needs an explicit scope.
 5. Failures in `async` are reported when you `await`. Don't lose the deferred handle, or the exception is lost.
 
+**Enforcement:** review; `async` only for combined concurrent results, no immediate `.await()`, no fire-and-forget `async`.
+
 ### 9.12 — Backpressure is the producer's problem. Bound your producers.
 
 **Reasoning, step by step:**
@@ -109,12 +159,16 @@ This chapter covers Kotlin-the-language primitives (coroutines, `Flow`, `Channel
 3. For producers from non-coroutine sources (`callbackFlow`, `channelFlow`), explicitly configure the buffering strategy: `BufferOverflow.SUSPEND`, `DROP_OLDEST`, `DROP_LATEST`.
 4. Production rule: pick a strategy at the *producer* side; document why.
 
+**Enforcement:** review; `callbackFlow`/`channelFlow` declare an explicit `BufferOverflow` strategy with a stated reason.
+
 ### 9.13 — `runBlocking` only at the program entry point or in tests.
 
 **Reasoning, step by step:**
 1. `runBlocking` *blocks* the calling thread. Inside an event loop, it's a deadlock or a denial-of-service.
 2. Legitimate uses: `main()` for CLI/scripts, JUnit tests, debugging. Anywhere else, the caller should be a `suspend` function.
 3. If you "need" `runBlocking` in production code, you have an async-sync boundary. Move that boundary outward — make the entire call path async.
+
+**Enforcement:** Detekt to flag `runBlocking` outside `main()`/test sources; review the async-sync boundary.
 
 ## Cross-references
 

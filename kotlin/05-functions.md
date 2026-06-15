@@ -2,6 +2,32 @@
 
 Functions are the unit of reasoning. Most rules here exist to keep that unit small, named, and side-effect-honest.
 
+## What good looks like
+
+```kotlin
+/** Shell: does the I/O, then delegates the decision to a pure core. */
+suspend fun settleInvoice(id: InvoiceId, gateway: Gateway): Result<Receipt, SettleError> {
+    val invoice = repo.fetch(id).getOrElse { return Result.Err(it) }
+    val charge = computeCharge(invoice, discountPct = 0)   // pure, named boolean-free args
+    val receipt = gateway.charge(charge).getOrElse { return Result.Err(it) }
+    audit.log(id, receipt)                                 // side effect at the edge
+    return Result.Ok(receipt)
+}
+
+// Pure core — trivially testable, no I/O.
+private fun computeCharge(invoice: Invoice, discountPct: Int): Cents {
+    require(discountPct in 0..100) { "discountPct out of range: $discountPct" }
+    require(invoice.total >= Cents.ZERO) { "total must be non-negative: ${invoice.total}" }
+    val kept = invoice.total.amount * (100 - discountPct) / 100
+    return Cents(kept)
+}
+
+private fun List<LineItem>.totalCents(): Cents =                // extension on a type we own a chain over
+    Cents(sumOf { it.unitPrice.amount * it.quantity })
+```
+
+The shell `settleInvoice` does I/O and pushes the computation into a pure helper (5.9), staying well under the 60-line ceiling (5.1). `computeCharge` is a block body because it holds locals (5.2) and opens with two `require` assertions over its inputs. `discountPct = 0` is a named argument (5.4), and `totalCents` is an expression-bodied extension that adds a coherent operation (5.5, 5.2). Neither helper writes `: Unit` (5.12).
+
 ## Rules
 
 ### 5.1 — One function, one purpose. 60 lines is the ceiling.
@@ -13,6 +39,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 4. Top-level functions, member functions, and lambdas all count. A 60-line lambda is the same problem as a 60-line method.
 5. KDoc lines don't count.
 
+**Enforcement:** detekt's `LongMethod` rule, threshold = 60; review rejects names containing "and."
+
 ### 5.2 — Prefer expression bodies for single expressions; block bodies otherwise.
 
 **Reasoning, step by step:**
@@ -20,6 +48,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 2. The moment a body needs a local `val`, two `when` arms with side effects, or sequential statements, use `{ ... return ... }`.
 3. Public-API expression bodies still declare return types explicitly. Inference is allowed in private helpers if it's obvious.
 4. **Anti-pattern:** stuffing a multi-step body into `run { ... }` to keep using `=`. See [01-formatting-and-tooling.md §1.4](./01-formatting-and-tooling.md).
+
+**Enforcement:** review; detekt's `ExplicitApiMode` requires return types on public expression bodies.
 
 ### 5.3 — Default arguments over overloads.
 
@@ -30,6 +60,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 4. **Caveat on JVM:** default args don't directly create Java overloads — add `@JvmOverloads` if Java callers exist. See [JVM guide](../kotlin-jvm/01-java-interop.md).
 5. **Beware** of using *mutable* default values like `mutableListOf()` — each call evaluates the default fresh, but if the default is a captured singleton, every caller shares state. Prefer `List<T> = emptyList()` patterns.
 
+**Enforcement:** review; `@JvmOverloads` checked where Java callers exist.
+
 ### 5.4 — Named arguments at every call site with more than two parameters of the same type, or any boolean.
 
 **Reasoning, step by step:**
@@ -38,6 +70,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 3. **Hard rule:** booleans at call sites must be named. `setVisible(true)` is fine because the function name implies the parameter; `withRetries(true)` is not.
 4. Adjacent same-typed parameters (`crop(image, 10, 20, 30, 40)` — which two are width/height?) must be named.
 5. Lint: detekt's `NamedArguments` rule, threshold = 3 (or 2 for booleans).
+
+**Enforcement:** detekt's `NamedArguments` rule, threshold = 3 (2 for booleans).
 
 ### 5.5 — Extension functions: extend types you don't own; add coherent operations to types you do.
 
@@ -48,6 +82,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 4. **Scope rule:** the smallest scope that compiles is the right one. Local extension inside a function > private file-level extension > top-level extension > internal extension > public extension. Public extensions become part of your API forever.
 5. Don't extend types you fully own when a regular member would do — methods participate in inheritance, extensions don't.
 
+**Enforcement:** review; visibility kept to the smallest scope that compiles.
+
 ### 5.6 — `inline` for higher-order functions in hot paths and where you need `reified`.
 
 **Reasoning, step by step:**
@@ -55,6 +91,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 2. Use it when: (a) the function takes a lambda and is called in a hot path; (b) you need `reified` type parameters; (c) the function is small enough that inlining is cheap (~10 lines of body).
 3. Don't inline (a) large functions — every call site bloats; (b) functions without lambda parameters where the gain is marginal; (c) functions you'll refactor heavily — inlining ABI-couples callers to the body.
 4. `crossinline` if you pass the lambda to another function that captures it. `noinline` to opt a specific lambda out of inlining (e.g., to store it in a variable). The compiler errors will tell you exactly when you need these.
+
+**Enforcement:** review; detekt flags `inline` on large bodies and parameterless functions.
 
 ### 5.7 — Scope functions: pick by intent.
 
@@ -77,6 +115,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 4. **Anti-pattern:** chaining `?.let { it.foo }?.let { it.bar }?.let { it.baz }`. Use `?.foo?.bar?.baz` directly.
 5. **Anti-pattern:** scope functions to avoid declaring a local `val`. A named local is often clearer than a `with` block. Don't compress for compression's sake.
 
+**Enforcement:** review against the decision table; detekt's `NestedScopeFunctions` flags `?.let` chains.
+
 ### 5.8 — `vararg` only when the call site genuinely varies. Otherwise take a `List`/`Iterable`.
 
 **Reasoning, step by step:**
@@ -84,6 +124,8 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 2. It costs: each call allocates an array. Inside a hot loop, this is real.
 3. Use `vararg` when (a) the call site varies between literals, and (b) the function is the call site's terminal point.
 4. Otherwise take `List<T>` or `Iterable<T>`. Callers can `*names.toTypedArray()` or `listOf(...)` as they prefer.
+
+**Enforcement:** review; `vararg` rejected on hot-path signatures that take a `List` cleanly.
 
 ### 5.9 — Side-effects out of the body where you can. Pure functions are easier to test.
 
@@ -105,12 +147,16 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
    ```
 4. This is not religion. A logger call inside a function is fine. A function that does I/O, parsing, validation, and persistence is not.
 
+**Enforcement:** review; pure cores carry unit tests with no I/O fixtures.
+
 ### 5.10 — Function references over wrapping lambdas.
 
 **Reasoning, step by step:**
 1. `xs.map(::parseInt)` is clearer than `xs.map { parseInt(it) }`.
 2. Member references work: `xs.map(String::length)`. Bound references too: `xs.map(parser::parse)`.
 3. Use lambdas when the body does *more* than the reference would: arg reordering, partial application, additional logic.
+
+**Enforcement:** review; detekt's `RedundantLambdaArrow` and pass-through-lambda inspections.
 
 ### 5.11 — Tail-recursive only with `tailrec`, and only when iteration is genuinely worse.
 
@@ -120,12 +166,16 @@ Functions are the unit of reasoning. Most rules here exist to keep that unit sma
 3. **Rule:** no recursion in library code without `tailrec`. With `tailrec`, prove the recursive call is genuinely in tail position (the compiler will tell you if it isn't).
 4. Most "tail-recursive" candidates read better as a `while` loop or a `fold`. Reach for `tailrec` only when the recursive structure mirrors the problem (tree walks, parser combinators).
 
+**Enforcement:** review; recursion in library code requires `tailrec`, which the compiler verifies.
+
 ### 5.12 — `Unit` return is implicit; don't write `: Unit`.
 
 **Reasoning, step by step:**
 1. `fun log(msg: String) { println(msg) }` returns `Unit` by inference. Writing `: Unit` is noise.
 2. **Exception:** suspend functions where the explicit type aids reading. Even then, omit it unless the reader benefits.
 3. `Unit` is the value, not the absence of one — you can pass it around. You rarely should.
+
+**Enforcement:** detekt's `OptionalUnit` rule flags explicit `: Unit`.
 
 ## Cross-references
 

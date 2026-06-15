@@ -2,6 +2,31 @@
 
 Tests are code that runs on every push. They earn their keep when they fail meaningfully on real regressions and pass quietly otherwise.
 
+## What good looks like
+
+```kotlin
+class DeactivateUserTest {
+    private fun anyUser(
+        id: UserId = UserId("u-1"),
+        isActive: Boolean = true,
+    ): User = User(id, Email("test@example.com"), isActive)
+
+    @Test
+    fun `marks the user inactive and records the deactivation time`() {
+        val repo = FakeUserRepository(anyUser(isActive = true)) // real impl faked at the seam (11.4, 11.5)
+        val clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC) // injected, deterministic (11.9)
+        val service = UserService(repo, clock)
+
+        val result = service.deactivate(UserId("u-1")) // act
+
+        assertThat(result.isActive).isFalse() // what happened
+        assertThat(result.deactivatedAt).isEqualTo(clock.instant()) // and that it happened now (11.12)
+    }
+}
+```
+
+The test name reads as a sentence in backticks (11.1); arrange, act, and assert are separated by whitespace with one concern (11.2); the repository is a hand-written `Fake` named for what it is rather than a mock of the service layer (11.4, 11.5); the `Clock` is injected and fixed instead of pulled from the wild (11.9); the fixture comes from a default-bearing `anyUser` builder, not shared mutable state (11.8); and two related assertions verify both the state change and its timestamp (11.12).
+
 ## Rules
 
 ### 11.1 — Tests describe behavior, not implementation. Names are sentences.
@@ -12,6 +37,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Recommended shape: `\`<action> <expected outcome> when <condition>\``. Variations are fine; reading aloud as English isn't optional.
 4. Test names appear in CI output, in IDE green/red trees, and in flakiness dashboards. Treat them as public API of the test suite.
 
+**Enforcement:** review; backticked sentence-shaped names readable as English.
+
 ### 11.2 — Arrange / act / assert. One concern per test.
 
 **Reasoning, step by step:**
@@ -19,6 +46,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. One *concern* per test. If a test asserts five unrelated facts, splitting it into five tests improves failure messages — each tells you precisely what broke.
 3. Acceptable: multiple assertions that all verify the *same* concern. E.g., asserting both `result.status == OK` and `result.body.user == expectedUser` is the same concern ("the request succeeded with the expected user").
 4. **Anti-pattern:** "god tests" that exercise an entire feature in one method. They fail in unhelpful ways and resist refactoring.
+
+**Enforcement:** review; one concern per test, unrelated assertions split out.
 
 ### 11.3 — Parameterized tests for table-driven cases.
 
@@ -29,6 +58,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 4. **Make the table data-class shaped.** A `data class Case(val name: String, val input: X, val expected: Y)` is readable; a `Triple<X, Y, Z>` is not.
 5. Use `@DisplayName` or Kotest's named cases so the failure shows the *case name*, not a generic index.
 
+**Enforcement:** review; `@ParameterizedTest`/`withData` with a data-class case, no copy-pasted variants.
+
 ### 11.4 — Use real implementations where possible. Mock only at the genuine seam.
 
 **Reasoning, step by step:**
@@ -36,6 +67,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Mocking everything makes the test re-state the implementation. The test passes when the implementation is wrong in the way you mocked.
 3. The genuine seam is the *external boundary*: a network call, a database connection, a clock. Mock that, not the service layer.
 4. **Mocking framework preference:** MockK for Kotlin (on JVM: see [JVM guide ch. 11](../kotlin-jvm/) for setup). For pure-Kotlin domain types, often a hand-written fake (`FakeUserRepository`) reads cleaner than a mock.
+
+**Enforcement:** review; mocks confined to external boundaries, real code or fakes within the domain.
 
 ### 11.5 — Test doubles named for what they are.
 
@@ -48,6 +81,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Name reflects type: `StubClock`, `FakeUserRepository`, `SpyAuditor`, `MockGateway`.
 3. **Anti-pattern:** "MockClock" when it's actually a hand-rolled fake. Renames over reality lie to the next reader.
 
+**Enforcement:** review; double's name (`Stub`/`Fake`/`Spy`/`Mock`) matches its actual kind.
+
 ### 11.6 — Property-based tests where the property is naturally invariant.
 
 **Reasoning, step by step:**
@@ -56,6 +91,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Use it where you genuinely have invariants. Don't use it as a clever way to run the same test 100 times against random nonsense.
 4. **Shrinking** is the killer feature: when a property fails, the framework shrinks the input to a minimal failing case. Use frameworks that shrink well.
 
+**Enforcement:** review; property tests reserved for genuine invariants (round-trip, idempotence, monotonicity).
+
 ### 11.7 — Tests are independent. No order, no shared state.
 
 **Reasoning, step by step:**
@@ -63,6 +100,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Shared mutable state (`companion object var counter = 0`) creates cross-test coupling. One test's failure masks another's success.
 3. Each test sets up its own fixtures. `@BeforeEach` per test, not `@BeforeAll`. `@BeforeAll` is acceptable only for truly immutable shared setup (a parsed schema, a fixed clock).
 4. **Parallel-by-default:** assume the test runner will execute tests concurrently. Anything assuming serial order is a future flake.
+
+**Enforcement:** parallel test execution enabled in CI; `@BeforeEach` fixtures, no shared mutable state.
 
 ### 11.8 — Fixtures via builders or fixture functions, not test-class mutable state.
 
@@ -80,6 +119,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
    ```
    Test overrides only what it cares about: `val u = anyUser(isActive = false)`.
 
+**Enforcement:** review; fixtures from builders or fixture functions, no `lateinit var` shared across tests.
+
 ### 11.9 — Time, randomness, and IDs: injected, not pulled from the wild.
 
 **Reasoning, step by step:**
@@ -87,6 +128,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Same for `Random`, `UUID.randomUUID()`, any source of non-determinism.
 3. Tests use `Clock.fixed(...)`, deterministic `Random(seed)`, and ID generators they control.
 4. The injection cost is one constructor parameter. The testability payoff is permanent.
+
+**Enforcement:** review; `Clock`/`Random`/ID sources injected, no direct `Instant.now()`/`UUID.randomUUID()` in production paths.
 
 ### 11.10 — Useful failure messages. The framework helps; you help more.
 
@@ -96,6 +139,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Add context with `.withFailMessage("when processing $request")` or Kotest's `assertSoftly { ... }`.
 4. **Rule:** when a test fails, the message should let a teammate debug *without* re-running the test. Include relevant inputs, intermediate values, and what was expected.
 
+**Enforcement:** review; fluent AssertJ/Kotest matchers with context, not bare `assertEquals`.
+
 ### 11.11 — No `Thread.sleep` in tests. Use polling, time-virtualization, or coroutines.
 
 **Reasoning, step by step:**
@@ -104,6 +149,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. For genuinely external timing: poll with a timeout. `awaitility` or hand-rolled `while (System.currentTimeMillis() < deadline)` patterns.
 4. A test that needs to sleep "to give the thread time to start" is a test that has the wrong synchronization model.
 
+**Enforcement:** lint/grep ban on `Thread.sleep` in test sources; `runTest`/`awaitility` for timing.
+
 ### 11.12 — Assertion density mirrors production code: 2+ per test on average.
 
 **Reasoning, step by step:**
@@ -111,6 +158,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Tests verifying complex outcomes should assert *both* the positive (what happened) and the negative (what didn't). Example: "user was created" implies `user.id != null` *and* `repository.count == 1` *and* `audit.log was called exactly once`.
 3. Pair-assertion: verify the same property two ways. After `sort(xs)`, assert (a) `xs.size unchanged` (no loss) and (b) ordering invariant holds.
 4. Don't pile up unrelated assertions just to hit a number. Two related assertions > one bare one > five unrelated ones.
+
+**Enforcement:** review; related positive-and-negative assertions, not padding to a count.
 
 ## Cross-references
 

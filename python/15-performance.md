@@ -2,6 +2,40 @@
 
 Design-time is the best time for 1000× improvements. Code-time is the best time for 10× ones. Profile-time is the only honest time for everything below 10×.
 
+## What good looks like
+
+```python
+import asyncio
+from dataclasses import dataclass
+from functools import lru_cache
+from itertools import batched
+
+@dataclass(slots=True, frozen=True)
+class Quote:
+    symbol: str
+    cents: int
+
+@lru_cache(maxsize=1024)
+def fee_for(tier: str) -> int:  # pure, bounded memo
+    return _fee_table[tier]
+
+def settle(quotes: list[Quote], active: frozenset[str]) -> int:
+    # stream the filter; build the set once, look up in O(1)
+    billable = (q for q in quotes if q.symbol in active)
+    return sum(q.cents + fee_for(_tier_of(q.symbol)) for q in billable)
+
+async def fetch_all(symbols: list[str]) -> list[Quote]:
+    # batch the network round-trips, bound the fan-out per chunk
+    out: list[Quote] = []
+    async with asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(_fetch_chunk(c)) for c in batched(symbols, 256)]
+    for t in tasks:
+        out.extend(t.result())
+    return out
+```
+
+`Quote` is a slotted frozen dataclass for the hot value type (15.3, 15.13); `fee_for` memoizes a pure function with a bounded `maxsize` (15.5); `settle` streams through a generator rather than materializing the filtered list (15.4) and tests membership against a `frozenset` for O(1) lookup (15.8); `fetch_all` attacks the slowest resource first by batching network round-trips into bounded async chunks (15.1, 15.9). No module-level mutable state holds the accumulators (15.6).
+
 ## Rules
 
 ### 15.1 — Design for the slowest resource first: network > disk > memory > CPU.
@@ -11,6 +45,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 2. Allocation pressure rarely wins from instruction-level tuning; reduce allocations first.
 3. Order of priority: eliminate the round-trip; batch the round-trips; cache the response; reduce allocations; tune the inner loop.
 4. CPU optimizations are last because (a) they're the smallest absolute wins on most server workloads, (b) the Python interpreter is the speed ceiling, (c) they're easiest to do wrong.
+
+**Enforcement:** design review; perf work starts at the round-trip, not the inner loop.
 
 ### 15.2 — Profile before you optimize. `py-spy`, `cProfile`, `memray`, `scalene`.
 
@@ -22,6 +58,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 5. **`scalene`** — CPU + memory in one tool, distinguishes Python vs native time.
 6. **Rule:** before "fixing" a perf issue, capture a profile that *shows the issue*. After the fix, capture another. The delta is the proof.
 
+**Enforcement:** review; a perf PR carries before/after profiles, not just a claim.
+
 ### 15.3 — `__slots__` for hot-path classes. Skip the per-instance `__dict__`.
 
 **Reasoning, step by step:**
@@ -31,6 +69,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 4. Trade-off: no dynamic attribute assignment. For value types this is a feature.
 5. Multi-inheritance + slots is finicky — multi-inherit two slot-classes with overlapping slots and you'll get errors. Most value types don't multi-inherit.
 
+**Enforcement:** review; hot-path classes declare `__slots__` or `@dataclass(slots=True)`.
+
 ### 15.4 — Generators over lists for large or streaming data.
 
 **Reasoning, step by step:**
@@ -38,6 +78,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 2. `(x.value for x in items)` is lazy — one element in memory at a time, but iterable only once.
 3. For chained transforms, lazy beats eager when the intermediate sizes are large. For small inputs (~100 elements), eager is faster — comprehension overhead is dominated by lazy-iterator overhead.
 4. `itertools` operations are lazy by default: `chain`, `groupby`, `islice`, `accumulate`, `pairwise`.
+
+**Enforcement:** review; large or streaming pipelines use generators, not materialized lists.
 
 ### 15.5 — `functools.lru_cache` with bounded `maxsize`.
 
@@ -48,6 +90,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 4. Memoize *pure* functions only. Side-effecting cached calls produce stale results and confusion.
 5. Inspect with `func.cache_info()` (hits, misses, current size).
 
+**Enforcement:** review; `lru_cache` carries an explicit `maxsize` and wraps only pure functions.
+
 ### 15.6 — Avoid global state. Module-level mutable singletons are a code smell.
 
 **Reasoning, step by step:**
@@ -55,6 +99,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 2. If state is needed: encapsulate in a class, inject the class as a dependency. Tests can substitute.
 3. Acceptable module-level mutables: compiled regexes (immutable after compile), connection pools (configured at import, lifecycle managed elsewhere), `functools.lru_cache` (designed for this).
 4. **Anti-pattern:** module-level counters incremented from inside functions. That's per-process global state with no concurrency story.
+
+**Enforcement:** review; mutable state is injected, not module-level, outside the listed exceptions.
 
 ### 15.7 — String operations: `"".join(parts)`, f-strings, no `+` in loops.
 
@@ -64,6 +110,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 3. `str.format` and `%`-style are slower; `%`-style is used for logging because of laziness, not speed.
 4. For binary data, `bytes`/`bytearray` and `b"".join` for the same reasons.
 
+**Enforcement:** review; no `+=` string-building in loops, `"".join` and f-strings instead.
+
 ### 15.8 — `dict`/`set` for O(1) lookup. `list.in` for unbounded scans.
 
 **Reasoning, step by step:**
@@ -71,6 +119,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 2. `dict` lookup is O(1) average; constants matter for tight loops.
 3. `frozenset` for immutable membership tests. Slightly faster than `set` for read-only.
 4. **Anti-pattern:** scanning a list for membership inside a loop over another list. That's O(n²). Build a set first.
+
+**Enforcement:** review; repeated membership tests use a `set`/`dict` built once, never `in` over a list.
 
 ### 15.9 — `asyncio` overhead: cheap, not free. Don't over-spawn.
 
@@ -86,6 +136,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
    ```
 4. `itertools.batched` (3.12+) for the chunking.
 
+**Enforcement:** review; fan-out is batched into chunks, not one task per fine-grained element.
+
 ### 15.10 — GIL realities: threading helps I/O, not CPU.
 
 **Reasoning, step by step:**
@@ -95,12 +147,16 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 4. For CPU parallelism: `multiprocessing`, or call into a native extension that releases the GIL (NumPy, Polars, much of scipy).
 5. Python 3.13's experimental free-threaded build (PEP 703) removes the GIL but isn't yet default. Don't depend on it.
 
+**Enforcement:** review; threads for I/O parallelism, `multiprocessing` or native extensions for CPU.
+
 ### 15.11 — Native extensions for hot paths: numpy, polars, pyarrow, Cython.
 
 **Reasoning, step by step:**
 1. Numeric and columnar workloads in pure Python are slow. `numpy`/`pandas`/`polars`/`pyarrow` are 10-1000× faster for vectorized operations.
 2. For custom hot paths: Cython, `mypyc`, Rust extensions (`pyo3`), C extensions. The cost is build complexity; the win is order-of-magnitude.
 3. Don't optimize prematurely. Measure first; reach for native extensions when profiles say so.
+
+**Enforcement:** review; native extensions enter a hot path on profile evidence, not speculation.
 
 ### 15.12 — Cold-start matters for some workloads. Lazy imports help.
 
@@ -110,6 +166,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 3. `importlib.util.LazyLoader` for true lazy module loading. Useful for plugin systems and CLI tools.
 4. For long-running services, cold-start doesn't matter much. For CLI tools and serverless, it does.
 
+**Enforcement:** review; cold-start-sensitive entrypoints defer heavy imports into the call site.
+
 ### 15.13 — `dataclass` performance: `slots=True`, `frozen=True`, careful with `__hash__`.
 
 **Reasoning, step by step:**
@@ -117,6 +175,8 @@ Design-time is the best time for 1000× improvements. Code-time is the best time
 2. Without `slots=True`, you pay for a per-instance `__dict__`. Significant memory across millions of instances.
 3. `__hash__` is generated when `frozen=True`. Hashing iterates fields each call — for very wide dataclasses on a hot path, cache the hash if you can.
 4. Don't reach for `attrs`/`pydantic` for hot-path value types. They have richer features but more overhead. Stdlib `dataclass` is the right tool for the inner loop.
+
+**Enforcement:** review; hot-path value types are stdlib `dataclass` with `slots=True`, not `attrs`/`pydantic`.
 
 ## Cross-references
 

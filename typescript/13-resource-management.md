@@ -62,7 +62,10 @@ One `AbortController` is the lifecycle handle for the fetch, the interval, and t
 ```ts
 class TempDir implements AsyncDisposable {
   #disposed = false;
-  private constructor(readonly path: string) {}
+  readonly path: string;
+  private constructor(path: string) {
+    this.path = path;
+  }
   static async create(): Promise<TempDir> {
     return new TempDir(await fs.mkdtemp(join(tmpdir(), 'app-')));
   }

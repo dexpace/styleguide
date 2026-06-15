@@ -2,6 +2,35 @@
 
 PEP 8's naming rules are good enough. We follow them and add a small number of project conventions.
 
+## What good looks like
+
+```python
+from typing import Final, Protocol
+
+MAX_RETRIES: Final[int] = 3              # 2.1, 2.8 — module constant, annotated
+_DEFAULT_TIMEOUT: Final[float] = 5.0     # 2.2 — internal, single leading underscore
+
+
+class BookingReader(Protocol):           # 2.1, 2.9 — Protocol named for the contract, no `I` prefix
+    def get_booking(self, booking_id: BookingId) -> Booking: ...
+
+
+class BookingClient:                     # 2.5, 2.11 — owns the call surface, `Client` suffix
+    def get_booking(self, booking_id: BookingId) -> Booking: ...   # 2.12 — raises if missing
+    def list_bookings(self) -> ItemPaged[Booking]: ...             # 2.12 — pageable iterator
+    def create_booking(self, request: BookingRequest) -> Booking: ...
+    def booking_exists(self, booking_id: BookingId) -> bool: ...   # 2.4, 2.12 — bool, never raises on absence
+
+    def should_retry(self, attempt: int) -> bool:                  # 2.4 — boolean reads as English
+        return attempt < MAX_RETRIES
+
+
+def load_booking(client: BookingClient, booking_id: BookingId) -> Booking:  # 2.5 — verb-first action
+    return client.get_booking(booking_id)
+```
+
+Names carry their meaning without a type prefix: `snake_case` functions and variables against a `PascalCase` `BookingClient` (2.1), the `Client` suffix marking the call surface (2.11), and the `get_`/`list_`/`create_`/`_exists` verbs reading off the resource taxonomy (2.12). Booleans state a yes/no question (2.4), the constant is module-level and annotated (2.8), and the `Protocol` is named for its contract rather than carrying an `I` prefix (2.9).
+
 ## Rules
 
 ### 2.1 — `snake_case` for everything except classes.
@@ -13,6 +42,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 4. Type variables: `T`, `K`, `V` for canonical use; `TItem`, `TKey`, `TValue` (PascalCase with `T` prefix) when you need descriptive names. PEP 484 allows both.
 5. Acronyms in class names are treated as words: `HttpClient`, `XmlParser`. Not `HTTPClient` (that's the stdlib's choice for `urllib`; new code in our style uses `HttpClient`).
 
+**Enforcement:** Ruff `N801`/`N802`/`N803`/`N806` (pep8-naming) flag class, function, argument, and variable casing.
+
 ### 2.2 — Underscore prefixes signal visibility intent. Two leading underscores trigger name-mangling — use sparingly.
 
 **Reasoning, step by step:**
@@ -21,6 +52,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 3. `__name__` (two leading and trailing) — reserved for dunders. Don't invent your own.
 4. **Rule:** `_` for internal. `__` only when name-mangling is genuinely needed (subclassing scenarios). Never invent new dunders.
 
+**Enforcement:** review; name-mangling `__` and invented dunders are caught in read-through.
+
 ### 2.3 — Module names: `snake_case`, short, descriptive.
 
 **Reasoning, step by step:**
@@ -28,12 +61,16 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 2. Short and singular. `user.py` not `users.py`, `payment.py` not `payments.py` — unless the module genuinely covers the *collection*.
 3. No Python keywords or stdlib collisions. `email.py` next to the stdlib `email` package will hurt.
 
+**Enforcement:** Ruff `N999` (invalid module name) plus `A005` (stdlib-shadowing module).
+
 ### 2.4 — Boolean variables and functions: `is_*`, `has_*`, `should_*`.
 
 **Reasoning, step by step:**
 1. `is_active`, `has_default_card`, `should_retry` reads as English.
 2. `not active` reads as "this isn't active." `not is_active` reads as "not is active" — slightly more awkward, but clearer about the negation.
 3. Negative-form names compound badly. `not_ready` → `not not_ready` is a double-negative head-scratcher.
+
+**Enforcement:** review; boolean prefix and negative-form names are a read-through check.
 
 ### 2.5 — Functions describe *actions*, classes describe *things*, properties describe *state*.
 
@@ -43,6 +80,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 3. Properties / class attributes: noun or `is_`/`has_` boolean. `user.email`, `request.is_authenticated`.
 4. **Beware:** `*Manager`, `*Helper`, `*Util`, `*Handler` — these often signal a class with no single responsibility. Consider a top-level function or a split into smaller classes.
 
+**Enforcement:** review; verb/noun fit and `*Manager`/`*Helper` smells are caught in read-through.
+
 ### 2.6 — Single-character variables only in tight scope.
 
 **Reasoning, step by step:**
@@ -50,6 +89,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 2. `for u in users: load(u)` is borderline — the scope is small but `u` carries no domain meaning.
 3. `for user in users:` is the safe default. Three extra letters cost nothing.
 4. Exception: `x`, `y`, `z` for coordinates; `i`, `j`, `k` for indices; `n` for counts; `_` for "ignored." These are the canonical short names.
+
+**Enforcement:** review; single-character names outside tight scope are a read-through check.
 
 ### 2.7 — Test names: long, descriptive, sentence-shaped.
 
@@ -59,6 +100,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 3. Use `snake_case` (Python convention) — backticks for spaces aren't a Python feature.
 4. Test names appear in CI output and flakiness dashboards. Treat them as public API of the test suite.
 
+**Enforcement:** review; test-name descriptiveness is a read-through check.
+
 ### 2.8 — Constants: module-level, `SCREAMING_SNAKE_CASE`, type-annotated.
 
 **Reasoning, step by step:**
@@ -66,6 +109,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 2. `typing.Final` documents and enforces that the binding doesn't get reassigned (mypy checks).
 3. `SCREAMING_SNAKE_CASE` makes constant-vs-variable visible at the call site.
 4. **Anti-pattern:** writing `MAX_RETRIES = 3` inside a function. That's not a constant — it's a re-evaluated local. Move to module scope, or just use the literal.
+
+**Enforcement:** mypy enforces `Final` (no reassignment); Ruff `N816` flags mixed-case module-level names.
 
 ### 2.9 — Avoid Hungarian notation and type prefixes.
 
@@ -76,6 +121,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 4. **Don't suffix classes with `Async`** (`BookingClientAsync` is wrong). Sync and async client classes share the class name and differ by module path (`acme.booking.BookingClient` vs `acme.booking.aio.BookingClient`). See [9.13](./09-concurrency.md).
 5. A function-level `_async` suffix is acceptable only when a sync and async *function* coexist in the same module and the module isn't large enough to split. Prefer splitting.
 
+**Enforcement:** review; Hungarian/type prefixes and `Async` class suffixes are caught in read-through.
+
 ### 2.10 — Type variables: short and meaningful.
 
 **Reasoning, step by step:**
@@ -84,6 +131,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 3. `T_co = TypeVar("T_co", covariant=True)`, `T_contra = TypeVar("T_contra", contravariant=True)` — variance is in the name.
 4. For complex generic signatures, descriptive names help: `TUser = TypeVar("TUser", bound=User)`. PEP 695's `type` statement and `def foo[T](...)` syntax (Python 3.12+) reduce the boilerplate.
 
+**Enforcement:** review; type-variable naming and variance suffixes are a read-through check.
+
 ### 2.11 — Service-client classes end in `Client`.
 
 **Reasoning, step by step:**
@@ -91,6 +140,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 2. Not `PaymentProxy`, `PaymentManager`, `PaymentService`, `PaymentAPI`. The suffix is `Client` and only `Client`. Consistency lets a reader find the entry point by completion in 1–2 keystrokes.
 3. Specialized sub-clients (when a service has nested resources) follow the same rule. A `payments` attribute on a `BookingClient` returns a `PaymentClient`, not a `PaymentSubClient` or `Payments`.
 4. **From Azure SDK guidelines:** "DO name service client types with a `Client` suffix."
+
+**Enforcement:** review; the `Client` suffix on service-client classes is a read-through check.
 
 ### 2.12 — Method verb taxonomy for resource-shaped operations.
 
@@ -114,6 +165,8 @@ PEP 8's naming rules are good enough. We follow them and add a small number of p
 3. **Rule:** don't invent new verbs when one of these fits. Don't reuse a verb against its documented semantics — `delete_user(id)` must not raise on missing.
 4. **Anti-pattern:** `fetch_user`, `read_user`, `find_user` — pick `get_user` and be consistent. Synonyms read like a poorly-organized API.
 5. **Cross-language consistency:** when an organization ships SDKs in multiple languages for the same service, align the verbs across languages — `GetUser` (Go), `getUser` (Kotlin), `get_user` (Python) all mean the same thing. The taxonomy here is the Python form.
+
+**Enforcement:** review; verb-against-taxonomy and consistent semantics are caught in read-through.
 
 ## Worked example
 

@@ -68,9 +68,18 @@ Kotlin gives you both worlds: data classes, sealed hierarchies, immutable collec
 14. **Performance from the outset, but pay for what you use.** `inline` for higher-order hot paths. `value class` for ID/wrapper types. `Sequence` for chained transforms on large collections. Don't `inline` everything; don't `Sequence`-ify short lists.
 15. **Zero technical debt.** What exists meets the design goals. Public API hardens fast — `internal` aggressively, `@RequiresOptIn` for experimental.
 
+## Deviations from Upstream
+
+This guide takes the Kotlin official coding conventions as canonical. The first entry below is a genuine deviation — a place the conventions take a position we override (the 100-column line limit); the second is an addition the conventions do not address (the 60-line function cap). Each is recorded so it can be revisited surgically. The Google Android Kotlin style guide is supplemental, not a separate baseline; where it is stricter than the conventions it informs a rule, but it adds no deviation of its own.
+
+| Rule | Upstream position | Our position | Why |
+|---|---|---|---|
+| Line length | Kotlin conventions / ktlint default: 100 columns | 120-column hard limit | Kotlin signatures — named args, generic bounds, lambda types — genuinely run wider than Java, and 120 still fits side-by-side diffs at modern resolutions. See [01-formatting-and-tooling.md](./01-formatting-and-tooling.md). |
+| Function size | No upstream cap | 60-line hard cap, ktlint/detekt-enforced; aim 15–30 | Owner decision; Tiger Style discipline, the Kotlin-scaled sibling of Go's 70. See [05-functions.md](./05-functions.md). |
+
 ## Influences
 
-- **[Kotlin official coding conventions](https://kotlinlang.org/docs/coding-conventions.html)** — canonical authority. Where our guidance collides, the official conventions win.
+- **[Kotlin official coding conventions](https://kotlinlang.org/docs/coding-conventions.html)** — canonical authority. Where our guidance collides, the official conventions win (save the deviations above).
 - **[Google Android Kotlin style guide](https://developer.android.com/kotlin/style-guide)** — supplemental; useful for several rules even outside Android.
 - **[Effective Kotlin (Marcin Moskała)](https://kt.academy/book/effectivekotlin)** — the closest thing Kotlin has to a community canon.
 - **[Expedia Group Java SDK](https://github.com/ExpediaGroup/expediagroup-java-sdk)** — concrete examples of decoration via `by`, pipeline composition, sealed exceptions with correlation IDs.
@@ -79,3 +88,7 @@ Kotlin gives you both worlds: data classes, sealed hierarchies, immutable collec
 ## Applying Style Changes
 
 When adopting a new rule or migrating away from a deprecated pattern, apply the change at the **module / package level or larger** — never mix two styles within the same package. A half-migrated package is more confusing than either end state.
+
+---
+
+Perfection over technical debt — debt never gets paid

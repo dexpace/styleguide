@@ -2,6 +2,39 @@
 
 Errors are values. Exceptions are for the things you genuinely cannot handle. Two rules with sharp edges; everything else follows.
 
+## What good looks like
+
+```kotlin
+sealed interface Result<out T, out E> {
+    data class Ok<T>(val value: T) : Result<T, Nothing>
+    data class Err<E>(val error: E) : Result<Nothing, E>
+}
+
+sealed interface ChargeError {
+    data class Declined(val reason: DeclineReason) : ChargeError
+    data class GatewayUnavailable(val cause: Throwable) : ChargeError
+}
+
+// Boundary: translate the gateway's exceptions into the domain's typed error channel.
+suspend fun chargeCard(card: Card, amount: Cents): Result<Receipt, ChargeError> {
+    require(amount.value > 0) { "amount must be positive, got $amount" } // 8.4 programmer error
+
+    val response = try {
+        gateway.submit(card.tokenize(), amount)
+    } catch (e: GatewayException) { // 8.3 external fault, 8.5 wrapped at the boundary
+        return Result.Err(ChargeError.GatewayUnavailable(e)) // 8.5 cause preserved
+    }
+
+    return when (response.code) { // 8.6 exhaustive, no else
+        ResponseCode.OK        -> Result.Ok(response.toReceipt())
+        ResponseCode.DECLINED  -> Result.Err(ChargeError.Declined(response.declineReason()))
+        ResponseCode.TEMPORARY -> Result.Err(ChargeError.GatewayUnavailable(response.errorOrUnknown()))
+    }
+}
+```
+
+`ChargeError` is a sealed ADT, not an exception (8.1); the function returns the canonical `Result<out T, out E>` typed error channel (8.2); the gateway's external fault throws and is caught only at this boundary, with its cause preserved into the wrap (8.3, 8.5); the precondition uses `require` for the caller's bug (8.4); the `when` is exhaustive with no `else` (8.6). A throwing dependency becomes a `Result` exactly here, never deeper.
+
 ## Rules
 
 ### 8.1 — Domain failures are sealed ADTs. Not exceptions.
@@ -20,6 +53,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
    }
    ```
 
+**Enforcement:** review; expected domain failures are sealed ADTs in the return type, not thrown exceptions.
+
 ### 8.2 — Use `kotlin.Result` or a project `Result<T, E>` sealed class.
 
 **Reasoning, step by step:**
@@ -34,6 +69,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 3. This gives you (a) a typed error channel — the `E` documents the *kinds* of failure, (b) compile-time exhaustiveness when unwrapping, (c) no entanglement with `Throwable`.
 4. Avoid pulling in arrow-kt's `Either` unless you're already committed to its idioms. For a server-side codebase, a small in-repo sealed class is enough.
 
+**Enforcement:** review; domain APIs return a project `Result<out T, out E>`, `kotlin.Result` confined to "succeeded or threw" call sites.
+
 ### 8.3 — Exceptions for unrecoverable, programmer-error, and external-fault.
 
 **Reasoning, step by step:**
@@ -45,6 +82,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
    - `error(...)` — unreachable branch reached. Indicates a bug.
 4. Never catch `Throwable` or bare `Exception` to "be safe." That's how `OutOfMemoryError`, `StackOverflowError`, and `CancellationException` get swallowed.
 
+**Enforcement:** review; detekt `TooGenericExceptionCaught` flags bare `Throwable`/`Exception` catches.
+
 ### 8.4 — `require`, `check`, `error` — three different exceptions for three different fault modes.
 
 **Reasoning, step by step:**
@@ -55,6 +94,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 5. **Assertion density rule:** average two assertions per function. Preconditions at entry, invariants at exit, no compound assertions (split them).
 6. **Pair-asserting:** when feasible, verify the same property two ways. Example: after a sort, assert both `xs.size == originalSize` (no loss) and `xs.zipWithNext().all { (a, b) -> a <= b }` (ordering). Both must hold.
 
+**Enforcement:** review; `require` at entry, `check` for state, `error` for unreachable branches, with assertion density ≈ two per function.
+
 ### 8.5 — Wrap exceptions at module boundaries; don't let them leak between layers.
 
 **Reasoning, step by step:**
@@ -64,6 +105,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 4. **Anti-pattern:** wrapping every exception into a custom `*Exception` that carries no extra information. Either add information (correlation ID, request context, structured fields) or don't wrap.
 5. From the Expedia SDK: `ExpediaGroupAuthException(requestId, message, cause)` — the wrap is worth it because it adds correlation context.
 
+**Enforcement:** review; foreign exception types are caught and translated at adapter modules, never observed in domain code.
+
 ### 8.6 — Exhaustive `when` over sealed subjects. No `else`.
 
 **Reasoning, step by step:**
@@ -71,6 +114,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 2. Adding a new variant to the sealed hierarchy then *fails to compile* everywhere a `when` doesn't handle it. This is exactly the refactor safety you want.
 3. Adding `else -> TODO()` defeats this. Don't.
 4. Acceptable `else`: when the subject is *open* (`Throwable`, arbitrary `Any`) and you genuinely don't know all the variants. State that in a comment.
+
+**Enforcement:** compiler exhaustiveness on `when` expressions over sealed/enum subjects; detekt `ElseCaseInsteadOfExhaustiveWhen` flags an unnecessary `else`.
 
 ### 8.7 — `runCatching` only at adapter boundaries.
 
@@ -80,6 +125,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 3. Right place: the *adapter* function that calls into a Java library or framework. Translate the result into your domain's `Result<T, E>` immediately.
 4. **Trap:** `runCatching` catches `Throwable`, including `CancellationException`. In coroutines, you must rethrow `CancellationException` — see [chapter 09](./09-concurrency.md).
 
+**Enforcement:** review; `runCatching` appears only in adapter modules, immediately mapped to a domain `Result`, with `CancellationException` rethrown.
+
 ### 8.8 — Error messages: include the context the caller can't see.
 
 **Reasoning, step by step:**
@@ -88,6 +135,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 3. Don't include sensitive values in messages — keys, tokens, full PII. Mask them. (See chapter 12 logging / [JVM logging guide](../kotlin-jvm/06-logging.md).)
 4. Messages travel into logs, stack traces, and sometimes user-facing surfaces. Treat them like a public API.
 
+**Enforcement:** review; secret-scanning in CI; messages carry identifying inputs with sensitive values masked.
+
 ### 8.9 — `try`/`finally` for cleanup is a code smell — use `use { }` or a coroutine scope.
 
 **Reasoning, step by step:**
@@ -95,6 +144,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
 2. For `AutoCloseable` resources: `resource.use { ... }` — concise, exception-safe, idiomatic.
 3. For coroutine-managed resources: structured concurrency closes scopes on cancellation. See [chapter 13](./13-resource-management.md).
 4. Acceptable `finally`: when you need ordering across multiple cleanups that don't share an `AutoCloseable` contract. Even then, consider a custom delegate or extension function.
+
+**Enforcement:** review; `AutoCloseable` resources released via `use { }`, manual `try`/`finally` cleanup justified in a comment.
 
 ### 8.10 — `Result.getOrThrow()` / `.getOrElse { ... }` / explicit `when` — pick one style per module.
 
@@ -105,6 +156,8 @@ Errors are values. Exceptions are for the things you genuinely cannot handle. Tw
    - `when (value) { is Ok -> ...; is Err -> ... }` — when both cases have non-trivial handling.
 2. Mixing all three in the same module hurts readability. Pick the dominant pattern for the module and stick with it.
 3. Project-`Result<T, E>` should expose helper functions that match what the codebase uses: `getOrElse`, `map`, `mapError`, `flatMap`, `fold`.
+
+**Enforcement:** review; one dominant unwrap style per module, helper functions exposed on the project `Result`.
 
 ## Worked example
 
