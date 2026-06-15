@@ -1,4 +1,11 @@
-# styleguide
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dexpace-wordmark-dark.svg">
+    <img alt="dexpace" src="docs/assets/dexpace-wordmark-light.svg" width="320">
+  </picture>
+</p>
+
+<h1 align="center">styleguide</h1>
 
 Binding rules for all dexpace projects. Follow them exactly. When in doubt, default to: **data + functions, immutable, explicit, errors handled**.
 
