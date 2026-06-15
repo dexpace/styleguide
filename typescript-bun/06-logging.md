@@ -74,7 +74,7 @@ log().info(`order ${orderId} placed with ${itemCount} items`); // bad — data m
 3. Bind the store once at the boundary with `runWithRequestContext(ctx, fn)` and read it through a `log()` accessor that does `root.child(store.getStore())`. Correlation id and principal then appear on every line in that request's async subtree, no parameter passed. The canonical context key is `correlationId` — one name in the store, the child logger, and every line, so a trace joins downstream without reconciling synonyms ([03 §3.6](./03-http-services.md) mints it at the edge). Use `store.run` to scope it; never `enterWith` mid-handler, which leaks the context into whatever runs next on the loop.
 
 ```ts
-app.use((req, _res, next) => runWithRequestContext({ correlationId: req.id, principal: req.user?.id }, next));
+app.use('*', (c, next) => runWithRequestContext({ correlationId: c.req.header('x-request-id') ?? randomUUID(), principal: c.get('principal') }, next));
 log().warn({ retries }, 'gateway slow, retrying'); // 12 frames deep, no logger threaded — still carries correlationId
 ```
 

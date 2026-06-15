@@ -7,15 +7,21 @@ Errors are values, handled explicitly. TypeScript erases types, so a thrown valu
 ```ts
 /** Base for every payment failure. Carries a correlation id for the log trail. */
 export class PaymentError extends Error {
-  constructor(message: string, readonly correlationId: string, options?: ErrorOptions) {
+  readonly correlationId: string;
+  constructor(message: string, correlationId: string, options?: ErrorOptions) {
     super(message, options);
+    this.correlationId = correlationId;
     this.name = new.target.name; // every subclass reports its own name
   }
 }
 
 export class CardDeclinedError extends PaymentError {
-  constructor(readonly cardLast4: string, readonly declineCode: string, correlationId: string) {
+  readonly cardLast4: string;
+  readonly declineCode: string;
+  constructor(cardLast4: string, declineCode: string, correlationId: string) {
     super(`card ****${cardLast4} declined: ${declineCode}`, correlationId);
+    this.cardLast4 = cardLast4;
+    this.declineCode = declineCode;
   }
 }
 
@@ -54,8 +60,12 @@ This module throws rather than returning a `Result` (8.6), and the choice holds 
 
 ```ts
 export class LineItemInvalidError extends OrderError {
-  constructor(orderId: string, readonly lineIndex: number, readonly quantity: number) {
+  readonly lineIndex: number;
+  readonly quantity: number;
+  constructor(orderId: string, lineIndex: number, quantity: number) {
     super(`order ${orderId}: line ${lineIndex} has invalid quantity ${quantity}`, orderId);
+    this.lineIndex = lineIndex;
+    this.quantity = quantity;
   }
 }
 ```
