@@ -2,6 +2,38 @@
 
 Serialization is where types meet the network. Pick libraries that respect Kotlin's type system; configure them to be strict.
 
+## What good looks like
+
+```kotlin
+/** Wire DTO — never the JPA entity. Strict Jackson config lives in one place. */
+data class OrderResponse(
+    val id: OrderId,
+    val placedAt: Instant,           // serialized ISO-8601 UTC, not a timestamp number
+    val status: OrderStatus,
+    val note: String? = null,        // optional with default: absent or null both fall back
+)
+
+@Configuration
+class JacksonConfig {
+    @Bean
+    fun objectMapper(): ObjectMapper = jacksonObjectMapper().apply {
+        registerModule(JavaTimeModule())                                   // java.time.* support
+        disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)            // ISO-8601 strings
+        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false) // forward-compat reads
+        configure(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES, true) // no silent zero-injection
+    }
+}
+
+@RestController
+class OrderController(private val orders: OrderService) {
+    @PostMapping("/orders")
+    fun place(@Valid @RequestBody req: CreateOrderRequest): OrderResponse =
+        orders.place(req.toCommand()).toResponse()   // validate at the boundary, map to the wire DTO
+}
+```
+
+`OrderResponse` is a dedicated `data class`, not the persistence entity (5.4); `placedAt` is an `Instant` emitted as ISO-8601 (5.3); the single `ObjectMapper` bean uses `jackson-module-kotlin` and pins strict flags (5.2, 5.5); `@Valid` validates at the deserialization boundary so downstream code trusts the type (5.8).
+
 ## Rules
 
 ### 5.1 — `kotlinx.serialization` preferred for internal-controlled JSON. Jackson at Spring boundaries.
@@ -14,6 +46,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
    - For Spring Boot HTTP boundaries (controllers, REST clients) and JVM ecosystem integration (Kafka, MongoDB): Jackson with `jackson-module-kotlin`.
 4. Don't fight the framework. If Spring uses Jackson and your code is server-side, accept Jackson at the boundary.
 
+**Enforcement:** review; `kotlinx.serialization` for internal-controlled JSON, Jackson confined to Spring and JVM-ecosystem boundaries.
+
 ### 5.2 — `jackson-module-kotlin` is mandatory if Jackson is on the classpath.
 
 **Reasoning, step by step:**
@@ -21,6 +55,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 2. Symptoms include: silent null injection into non-null fields, `MissingKotlinParameterException` on missing JSON keys, default values ignored.
 3. Register on Spring Boot 3+: it's automatic if the module is on the classpath. Otherwise: `ObjectMapper().registerKotlinModule()`.
 4. Verify by writing a test that deserializes JSON missing optional fields. Defaults must fire.
+
+**Enforcement:** dependency check for `jackson-module-kotlin` on the classpath; a round-trip test deserializing JSON with missing optional fields.
 
 ### 5.3 — Time types: `java.time.*`, not `java.util.Date`.
 
@@ -33,6 +69,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 3. Configure Jackson: `jackson-datatype-jsr310` + `WRITE_DATES_AS_TIMESTAMPS = false`. Emit ISO-8601 strings, not numbers.
 4. For `kotlinx.serialization`: import `kotlinx-serialization-json` and use the `Instant` serializer from `kotlinx-datetime` (Kotlin Multiplatform-friendly) or write a custom serializer for `java.time.Instant`.
 
+**Enforcement:** Detekt/ktlint ban on `java.util.Date` imports; `WRITE_DATES_AS_TIMESTAMPS` disabled, asserted by a serialization test.
+
 ### 5.4 — Domain DTOs are `data class`. Never expose entities or domain objects directly.
 
 **Reasoning, step by step:**
@@ -40,6 +78,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 2. DTOs (`UserResponse`, `CreateOrderRequest`) are dedicated `data class`es designed for the wire shape.
 3. **Decoupling pays off:** schema changes don't break clients, API versions don't leak into the domain, the wire shape can evolve independently.
 4. Yes, it's more mapping code. Write the mapping explicitly. (Or use a library — but be aware that mappers like MapStruct add code generation complexity.)
+
+**Enforcement:** ArchUnit rule forbidding entity/domain types in controller signatures; review that controllers return DTOs only.
 
 ### 5.5 — `null` vs absent: pick a semantics per field and document it.
 
@@ -55,6 +95,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
    - Optional, nullable, distinguishing absent: model with a wrapper, e.g., `JsonValue<T>(val present: Boolean, val value: T?)`, or use Jackson's `JsonNullable<T>` from OpenAPI extensions.
 4. Configure Jackson: `FAIL_ON_UNKNOWN_PROPERTIES = false` for forward-compat reads; `FAIL_ON_NULL_FOR_PRIMITIVES = true` so silent zero-injection doesn't bite.
 
+**Enforcement:** review of each DTO field's intended semantics; the strict-flag config asserted by deserialization tests for missing, null, and primitive cases.
+
 ### 5.6 — `kotlinx.serialization`: `@Serializable` on the data class, `Json` instance per use case.
 
 **Reasoning, step by step:**
@@ -62,6 +104,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 2. Configure a `Json` instance per use case: `val pretty = Json { prettyPrint = true; encodeDefaults = false }`. Don't share `Json.Default` across modules with different needs.
 3. Strict by default: `ignoreUnknownKeys = false` (catches typos), `coerceInputValues = false` (don't silently coerce types).
 4. Custom serializers via `@Serializer` for types you don't own (e.g., `java.time.Instant`).
+
+**Enforcement:** review; `@Serializable` on serialized data classes, no shared `Json.Default`, strict flags pinned on each configured `Json`.
 
 ### 5.7 — Polymorphic deserialization: sealed hierarchies, discriminator field.
 
@@ -71,6 +115,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 3. **Jackson:** `@JsonTypeInfo` + `@JsonSubTypes` on the sealed parent. Verbose, but works.
 4. Don't roll your own discriminator-handling code. Use the library's machinery; configure it explicitly.
 
+**Enforcement:** review; library-driven discriminators (`classDiscriminator` / `@JsonTypeInfo`) on sealed hierarchies, no hand-rolled type dispatch.
+
 ### 5.8 — Validation at the deserialization boundary.
 
 **Reasoning, step by step:**
@@ -78,6 +124,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 2. Validate in the deserializer or right after: Jakarta Bean Validation (`@NotBlank`, `@Pattern`, etc.) on DTOs; Spring's `@Valid` to trigger validation on controller inputs.
 3. Validation failures translate to 400 responses via `@ControllerAdvice`.
 4. Don't sprinkle validation throughout the domain. Validate at the boundary; downstream code trusts the type.
+
+**Enforcement:** review; `@Valid` on controller inputs, Bean Validation annotations on request DTOs, a `@ControllerAdvice` mapping failures to 400.
 
 ### 5.9 — Binary formats (Protobuf, Avro, CBOR) at performance-critical or schema-strict boundaries.
 
@@ -88,6 +136,8 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 4. **CBOR / MessagePack** — binary JSON-shaped formats. Pick if you want JSON semantics with smaller wire size.
 5. For Kotlin: `kotlinx.serialization` supports CBOR and Protobuf natively. For Avro: `kotlinx-serialization-avro` (third-party) or Java's Avro libraries.
 
+**Enforcement:** review at design time; schema-first formats chosen for high-volume or schema-strict boundaries, with the schema checked into source control.
+
 ### 5.10 — Streaming for large payloads. Don't load 10MB into memory.
 
 **Reasoning, step by step:**
@@ -96,8 +146,10 @@ Serialization is where types meet the network. Pick libraries that respect Kotli
 3. Producing large output: `JsonGenerator` writes incrementally. Spring's `ResponseEntity<StreamingResponseBody>` for streaming HTTP responses.
 4. For files: `Flow<T>` of records, decoded one at a time, written to the response one at a time. End-to-end bounded memory.
 
+**Enforcement:** review; streaming readers/writers (`JsonParser`/`JsonGenerator`/`Flow<T>`) on large-payload paths, no whole-stream `readValue` of unbounded input.
+
 ## Cross-references
 
 - DTOs vs entities: [ch. 04](./04-persistence.md).
 - Validation as a boundary concern: [generic guide ch. 08](../kotlin/08-error-handling.md).
-- Time types and clocks: [generic guide ch. 13](../kotlin/13-resource-management.md), §13.5.
+- Time types and clocks: serialize `Instant` as ISO-8601 UTC, never a wall-clock string; inject the `Clock` rather than reading it ambiently — [generic guide ch. 11](../kotlin/11-testing.md), §11.9.

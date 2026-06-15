@@ -1,8 +1,47 @@
-# 09 - Serialization
+# 09 — Serialization
 
-## JSON
+Bytes crossing the process boundary are untyped and untrusted. This chapter governs how Go turns structs into JSON and back: struct tags for field mapping, `omitempty` only where absence is legal, custom marshalers for types with special wire forms, `time.Time`/`time.Duration` so units never get guessed, and strings for money so IEEE 754 never rounds a price. Every decoded value is validated at the boundary before the domain sees it. It also covers the construction idioms — field-named literals, sized maps and slices, composite literals over `new()` — that keep the in-memory values these formats carry honest.
 
-Use `encoding/json` from the standard library. Use struct tags for field mapping:
+## What good looks like
+
+```go
+// Hotel is the wire DTO. Every field is tagged explicitly; optional fields
+// carry omitempty, required fields never do.
+type Hotel struct {
+    ID        string    `json:"id"`                  // required -- no omitempty
+    Name      string    `json:"name"`                // required -- no omitempty
+    Rating    float64   `json:"rating"`              // required -- no omitempty
+    SortBy    string    `json:"sort_by,omitempty"`   // optional
+    CreatedAt time.Time `json:"created_at"`          // RFC 3339 on the wire
+}
+
+func DecodeHotel(r io.Reader) (Hotel, error) {
+    var hotel Hotel
+    decoder := json.NewDecoder(r)
+    decoder.DisallowUnknownFields()
+    if err := decoder.Decode(&hotel); err != nil {
+        return Hotel{}, fmt.Errorf("decode hotel: %w", err)
+    }
+    // The decoder does not know the business rules. Validate at the boundary.
+    if hotel.ID == "" {
+        return Hotel{}, fmt.Errorf("hotel ID is required")
+    }
+    if hotel.Rating < 0 || hotel.Rating > 5 {
+        return Hotel{}, fmt.Errorf("hotel rating must be 0-5, got %f", hotel.Rating)
+    }
+    return hotel, nil
+}
+```
+
+This DTO maps every field with a struct tag and keeps `omitempty` off required fields (9.1, 9.2); `CreatedAt` is a `time.Time` serialized as RFC 3339, not a raw integer (9.4); the decoder streams from an `io.Reader` with `DisallowUnknownFields()` (9.8) and wraps its failure with `%w`; the boundary validates shape and ranges before returning, trusting nothing from outside the process (9.6, 9.7). A `Money` field on this struct would be a string, never a `float64` (9.5).
+
+## Rules
+
+### 9.1 — Map JSON fields with explicit struct tags.
+
+**Reasoning, step by step:**
+1. Use `encoding/json` from the standard library — it is the canonical Go serializer and needs no third-party dependency.
+2. Map every field to its wire name with a struct tag rather than relying on Go's default field-name casing. The tag is the contract between the struct and the JSON; making it explicit means a field rename in Go never silently changes the wire format.
 
 ```go
 type Hotel struct {
@@ -13,9 +52,13 @@ type Hotel struct {
 }
 ```
 
-## omitempty Rules
+**Enforcement:** review; `encoding/json` with explicit `json:` tags on serialized structs.
 
-Use `omitempty` for optional fields. Never use on required fields -- it hides bugs:
+### 9.2 — Use `omitempty` only on optional fields, never required ones.
+
+**Reasoning, step by step:**
+1. Use `omitempty` for optional fields so a zero value drops out of the output cleanly.
+2. Never put `omitempty` on a required field — it hides bugs. If a required field marshals to its zero value, the absence from the output is the signal that something is wrong; `omitempty` silences that signal.
 
 ```go
 type SearchParams struct {
@@ -25,11 +68,13 @@ type SearchParams struct {
 }
 ```
 
-If a required field marshals to its zero value, the absence from the output signals a bug. `omitempty` silences that signal.
+**Enforcement:** review; `omitempty` on optional fields only, never on required fields.
 
-## Custom Marshaling
+### 9.3 — Implement `json.Marshaler`/`json.Unmarshaler` for types with special serialization.
 
-Implement `json.Marshaler`/`json.Unmarshaler` for types with special serialization:
+**Reasoning, step by step:**
+1. When a type's wire form differs from its in-memory layout, implement `json.Marshaler`/`json.Unmarshaler` so the special handling lives with the type instead of leaking into every call site.
+2. Marshal through an explicit anonymous struct with its own tags, so the serialized shape is visible and controlled at the type, not inferred from the in-memory fields.
 
 ```go
 type Money struct {
@@ -45,11 +90,12 @@ func (m Money) MarshalJSON() ([]byte, error) {
 }
 ```
 
-## Time Handling
+**Enforcement:** review; `json.Marshaler`/`json.Unmarshaler` for types whose wire form differs from their layout.
 
-### Use `time.Time` and `time.Duration`
+### 9.4 — Carry time as `time.Time`/`time.Duration`, serialize as RFC 3339.
 
-Use `time.Time` for instants and `time.Duration` for elapsed time. Never use raw integers for time values -- they force every reader to guess the unit.
+**Reasoning, step by step:**
+1. Use `time.Time` for instants and `time.Duration` for elapsed time. Never use raw integers for time values — they force every reader to guess the unit.
 
 ```go
 // Good -- type carries the unit
@@ -63,9 +109,7 @@ func NewPoller(interval int) *Poller { ... }
 poller := NewPoller(10)
 ```
 
-### Comparing Time
-
-Use `time.Time` methods for comparison, never `==`:
+2. Compare times with `time.Time` methods, never `==`. The `==` operator does not account for the monotonic clock.
 
 ```go
 // Good
@@ -76,9 +120,7 @@ if t1.Equal(t2) { ... }
 if deadline == time.Now() { ... }
 ```
 
-### Calendar Time vs Absolute Time
-
-Distinguish between calendar operations and absolute durations:
+3. Distinguish calendar operations from absolute durations. `AddDate` walks the calendar and handles DST changes; `Add` advances by a fixed duration.
 
 ```go
 // "Same time tomorrow" (calendar) -- handles DST changes
@@ -88,9 +130,7 @@ newDay := now.AddDate(0, 0, 1)
 next := now.Add(24 * time.Hour)
 ```
 
-### External Systems
-
-When interfacing with systems that don't support `time.Time` or `time.Duration`, include the unit in the field name:
+4. When interfacing with systems that don't support `time.Time` or `time.Duration`, include the unit in the field name so the ambiguity dies at the boundary.
 
 ```go
 // Good -- unit is explicit
@@ -106,11 +146,7 @@ type ExternalConfig struct {
 }
 ```
 
-Use RFC 3339 format for timestamp strings in APIs. It is the standard Go serialization format and widely supported.
-
-### Date Serialization
-
-Always use `time.Time`. Serialize as RFC 3339 (ISO 8601). For date-only fields, use a custom type:
+5. Use RFC 3339 (ISO 8601) format for timestamp strings in APIs — it is the standard Go serialization format and is widely supported. For date-only fields, always keep the value as a `time.Time` behind a custom type that serializes the date portion.
 
 ```go
 type Date struct{ time.Time }
@@ -133,13 +169,21 @@ func (d *Date) UnmarshalJSON(data []byte) error {
 }
 ```
 
-## Money and Decimals
+**Enforcement:** review; `time.Time`/`time.Duration` for time values, RFC 3339 on the wire, units in field names at non-`time` boundaries.
 
-Never use `float64` for money. Use string representation or `shopspring/decimal`. Parse from strings, serialize to strings. IEEE 754 floating-point cannot represent most decimal fractions exactly.
+### 9.5 — Never use `float64` for money.
 
-## Validation After Unmarshal
+**Reasoning, step by step:**
+1. Never use `float64` for money. IEEE 754 floating-point cannot represent most decimal fractions exactly, so arithmetic silently accumulates rounding error.
+2. Use a string representation or `shopspring/decimal`. Parse from strings and serialize to strings, so the decimal value crosses every boundary intact.
 
-Always validate after `json.Unmarshal`. The decoder doesn't know your business rules:
+**Enforcement:** review; string or `shopspring/decimal` for monetary values, never `float64`.
+
+### 9.6 — Validate after every `json.Unmarshal`.
+
+**Reasoning, step by step:**
+1. Always validate after `json.Unmarshal`. The decoder enforces the JSON shape but knows nothing about your business rules — a syntactically valid payload can still be semantically wrong.
+2. Check the fields the domain depends on: required identifiers present, numeric values within range. Wrap the decode error with `%w` so the chain survives.
 
 ```go
 if err := json.Unmarshal(data, &hotel); err != nil {
@@ -153,13 +197,21 @@ if hotel.Rating < 0 || hotel.Rating > 5 {
 }
 ```
 
-## Never Trust External Data
+**Enforcement:** review; validation of required fields and ranges after every unmarshal.
 
-Every byte from outside the process is suspect. Validate shape, types, ranges, and lengths after deserialization. Assume the sender is hostile.
+### 9.7 — Never trust external data.
 
-## Streaming
+**Reasoning, step by step:**
+1. Every byte from outside the process is suspect. Assume the sender is hostile.
+2. After deserialization, validate shape, types, ranges, and lengths before the value reaches domain logic.
 
-For large payloads, use `json.Decoder` with `DisallowUnknownFields()`:
+**Enforcement:** review; shape, type, range, and length validation on all externally sourced data.
+
+### 9.8 — Stream large payloads with `json.Decoder` and `DisallowUnknownFields()`.
+
+**Reasoning, step by step:**
+1. For large payloads, use `json.Decoder` rather than `json.Unmarshal`. When reading from an `io.Reader` it decodes the stream directly instead of buffering the entire payload into memory.
+2. Call `DisallowUnknownFields()` so an unexpected field is an error, not silently dropped — the strictness catches client/server drift at the boundary.
 
 ```go
 decoder := json.NewDecoder(r.Body)
@@ -169,11 +221,12 @@ if err := decoder.Decode(&req); err != nil {
 }
 ```
 
-Use `json.Decoder` over `json.Unmarshal` when reading from an `io.Reader` -- it avoids buffering the entire payload into memory.
+**Enforcement:** review; `json.Decoder` with `DisallowUnknownFields()` for reads from an `io.Reader`.
 
-## Use `%q` for Quoted Strings
+### 9.9 — Use `%q` for quoted strings.
 
-Prefer `%q` over hand-quoting with `\"...\"` or single quotes. `%q` handles empty strings, control characters, and unicode correctly.
+**Reasoning, step by step:**
+1. Prefer `%q` over hand-quoting with `\"...\"` or single quotes. `%q` handles empty strings, control characters, and unicode correctly, where hand-quoting silently mangles all three.
 
 ```go
 // Good
@@ -183,11 +236,14 @@ return fmt.Errorf("parse %q: %w", raw, err)
 return fmt.Errorf("parse \"%s\": %w", raw, err)
 ```
 
-This is especially important for human-facing output where the input may be empty, contain whitespace, or contain control characters.
+2. This matters most for human-facing output where the input may be empty, contain whitespace, or contain control characters.
 
-## fmt.Stringer
+**Enforcement:** review; `%q` for quoting string values in format strings.
 
-Implement `fmt.Stringer` on types that benefit from a human-readable representation. This is used by `%s` and `%v` in format strings:
+### 9.10 — Implement `fmt.Stringer` for human-readable types.
+
+**Reasoning, step by step:**
+1. Implement `fmt.Stringer` on types that benefit from a human-readable representation. `%s` and `%v` use it, so logging and debugging output stays legible.
 
 ```go
 type Money struct {
@@ -200,11 +256,14 @@ func (m Money) String() string {
 }
 ```
 
-Use `%v` for default formatting, `%+v` for struct field names, `%#v` for Go syntax, and `%T` for the type name. These are valuable in logging and debugging.
+2. Choose the formatting verb deliberately: `%v` for default formatting, `%+v` for struct field names, `%#v` for Go syntax, and `%T` for the type name. These are valuable in logging and debugging.
 
-## Initializing Structs
+**Enforcement:** review; `fmt.Stringer` on types with a meaningful human-readable form.
 
-Always use field names in struct literals. Positional initialization breaks silently when fields are added or reordered.
+### 9.11 — Initialize structs with field names.
+
+**Reasoning, step by step:**
+1. Always use field names in struct literals. Positional initialization breaks silently when fields are added or reordered.
 
 ```go
 // Good -- field names make intent explicit
@@ -218,7 +277,7 @@ hotel := Hotel{
 hotel := Hotel{"123", "Grand Hotel", 4.5}
 ```
 
-Omit zero-value fields unless they add meaningful context. In test tables, explicit zero values can improve readability:
+2. Omit zero-value fields unless they add meaningful context. In test tables, explicit zero values can improve readability.
 
 ```go
 // Good -- zero values omitted in production code
@@ -236,7 +295,7 @@ config := ClientConfig{
 }
 ```
 
-For empty struct declarations, use `var` instead of an empty literal:
+3. For empty struct declarations, use `var` instead of an empty literal — the empty value-type literal `T{}` adds no information.
 
 ```go
 // Good
@@ -246,9 +305,12 @@ var user User
 user := User{}
 ```
 
-## Initializing Maps
+**Enforcement:** review; field-named struct literals, `var` over empty `T{}` literals.
 
-Use `make()` for maps that will be populated programmatically. Use map literals for maps with a fixed set of elements:
+### 9.12 — Initialize maps by purpose: `make()` to populate, literals for fixed sets.
+
+**Reasoning, step by step:**
+1. Use `make()` for maps that will be populated programmatically, and map literals for maps with a fixed set of elements. An empty literal `map[K]V{}` for a programmatic map is the wrong tool — say `make()`.
 
 ```go
 // Good -- populated programmatically
@@ -268,7 +330,7 @@ statusText := map[int]string{
 seen := map[string]bool{}
 ```
 
-When the map size is known or estimable, provide a capacity hint:
+2. When the map size is known or estimable, provide a capacity hint to reduce allocations.
 
 ```go
 // Good -- capacity hint reduces allocations
@@ -278,11 +340,14 @@ for _, h := range hotels {
 }
 ```
 
-Declare nil maps for maps that are only read (e.g., used in a lookup). Nil maps behave identically to empty maps for reads but panic on writes -- this catches accidental mutation.
+3. Declare nil maps for maps that are only read (e.g., used in a lookup). Nil maps behave identically to empty maps for reads but panic on writes — this catches accidental mutation.
 
-## Composite Literals
+**Enforcement:** review; `make()` for programmatic maps, literals for fixed sets, capacity hints where the size is known.
 
-Prefer composite literals over `new()` + field assignment:
+### 9.13 — Prefer composite literals over `new()`, with size hints for slices and maps.
+
+**Reasoning, step by step:**
+1. Prefer composite literals over `new()` followed by field assignment. The literal states the whole value in one expression instead of mutating it field by field.
 
 ```go
 // Good
@@ -299,7 +364,7 @@ hotel.Name = "Grand Hotel"
 hotel.Rating = 4.5
 ```
 
-For slices and maps, provide size hints when the size is known or estimable:
+2. For slices and maps, provide size hints when the size is known or estimable, so the value does not grow through multiple reallocations.
 
 ```go
 // Good -- pre-allocates capacity
@@ -315,9 +380,12 @@ for _, h := range hotels {
 }
 ```
 
-## Format Strings outside Printf
+**Enforcement:** review; composite literals over `new()`, size hints for slices and maps with known length.
 
-Declare format strings as `const` when they are used outside of a direct `fmt.*` call. This enables `go vet` to perform static analysis on the format string:
+### 9.14 — Declare format strings used outside `fmt.*` as `const`.
+
+**Reasoning, step by step:**
+1. Declare format strings as `const` when they are used outside of a direct `fmt.*` call. This lets `go vet` perform static analysis on the format string; a `var` format string is opaque to the analyzer.
 
 ```go
 // Good -- go vet can analyze the format
@@ -331,4 +399,12 @@ var userFormat = "user %s (ID: %d)"
 log.Printf(userFormat, name, id)
 ```
 
-This matters most for logging and error formatting where a mismatched format verb is a runtime bug, not a compile-time error.
+2. This matters most for logging and error formatting, where a mismatched format verb is a runtime bug, not a compile-time error.
+
+**Enforcement:** `go vet`; `const` format strings used outside direct `fmt.*` calls.
+
+## Cross-references
+
+- Zero values via pointer composite literals (`&T{}`), struct construction, and declaration idioms: [12 - Variables and Declarations](./12-variables-and-declarations.md).
+- Error wrapping with `%w` and `fmt.Errorf`: [03 - Error Handling](./03-error-handling.md).
+- API boundaries and DTO design: [05 - API Design](./05-api-design.md).

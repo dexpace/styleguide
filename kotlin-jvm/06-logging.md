@@ -1,6 +1,32 @@
 # 06 — Logging on JVM
 
-Logging is a public API for your future on-call self. Treat it like one.
+Logging is a public API for your future on-call self. Treat it like one. This chapter extends the core logging discipline for the JVM runtime: route everything through SLF4J via `kotlin-logging`, defer message construction with lazy blocks, structure events as key/value pairs, carry correlation context in MDC (and bridge it across coroutine suspensions), and log a failure exactly once at the boundary that handles it.
+
+## What good looks like
+
+```kotlin
+private val logger = KotlinLogging.logger {} // 6.1, 6.2
+
+suspend fun handleCharge(request: ChargeRequest): Receipt =
+    withContext(MDCContext()) {                     // 6.6 — MDC survives suspension
+        MDC.putCloseable("correlationId", request.correlationId).use {
+            logger.debug { "charging card ${request.maskedCard}" } // 6.3 lazy, 6.7 masked
+            try {
+                val receipt = gateway.charge(request)
+                logger.atInfo()                     // 6.4 INFO, 6.5 structured
+                    .addKeyValue("userId", request.userId.raw)
+                    .addKeyValue("amountMinor", request.amountMinor)
+                    .log("charge completed")
+                receipt
+            } catch (e: GatewayException) {
+                logger.error(e) { "charge failed for user ${request.userId.raw}" } // 6.11 once, here
+                throw ChargeFailedException(request.correlationId, e)
+            }
+        }
+    }
+```
+
+The logger is a file-scope `private val` whose name the empty `{}` infers (6.1, 6.2). The DEBUG line is a lazy block, so the masked-card string is only built when DEBUG is enabled (6.3), and it carries `****` rather than the PAN (6.7). The success path emits one structured INFO event with indexed key/value fields, not a concatenated sentence (6.4, 6.5). `MDCContext()` keeps `correlationId` attached across the `suspend` boundary (6.6), and the failure is logged exactly once — here, at the handler — with the throwable passed as a parameter, never concatenated (6.11).
 
 ## Rules
 
@@ -23,6 +49,8 @@ Logging is a public API for your future on-call self. Treat it like one.
    - `org.apache.commons.logging.*` — wrong era.
    - Direct `org.slf4j.LoggerFactory.getLogger(...)` — works, but loses lazy blocks.
 
+**Enforcement:** detekt `ForbiddenImport` blocks `java.util.logging`, `org.apache.commons.logging`, and `org.slf4j.LoggerFactory`; review confirms `kotlin-logging`.
+
 ### 6.2 — Logger declared as a `private val` at file/companion scope.
 
 **Reasoning, step by step:**
@@ -31,6 +59,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 3. For classes that need a logger and a companion object: declare in the `companion object`, again with `KotlinLogging.logger {}`.
 4. Don't pass loggers as parameters except in test scaffolding.
 
+**Enforcement:** review; one `private val logger = KotlinLogging.logger {}` per file or companion, never instantiated per call or passed as a parameter.
+
 ### 6.3 — Lazy message blocks. Never string-concat in the call.
 
 **Reasoning, step by step:**
@@ -38,6 +68,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 2. `logger.debug("expensive: " + heavy.compute())` evaluates `heavy.compute()` always.
 3. The lazy form is `kotlin-logging`'s main reason to exist. Use it.
 4. Same for SLF4J native: `logger.debug("user {} loaded", id)` — placeholders are formatted only if the level is enabled.
+
+**Enforcement:** detekt `ForbiddenMethodCall`/review flags string concatenation inside a `logger.*(...)` call; lazy `{ }` blocks or `{}` placeholders only.
 
 ### 6.4 — Levels mean what they say.
 
@@ -48,6 +80,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 4. **DEBUG** — detail useful for debugging, off in production.
 5. **TRACE** — extremely verbose, on only when diagnosing a specific incident.
 6. **Volume rule:** if INFO outputs more than ~10 lines per request, you're using INFO where DEBUG belongs.
+
+**Enforcement:** review; level audited against the rubric, with a per-request INFO-volume check in load tests.
 
 ### 6.5 — Structured logging: key/value pairs, not free-form strings.
 
@@ -64,6 +98,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 4. Alternatively, MDC for cross-cutting context (correlation IDs, user IDs) and KV pairs for per-event detail.
 5. Configure the appender to emit JSON in production, plain text in dev. Both should carry the same structured fields.
 
+**Enforcement:** review; per-event detail goes through `atInfo().addKeyValue(...)`/MDC, not interpolated into the message string.
+
 ### 6.6 — MDC for correlation context. Use `MDCContext` in coroutines.
 
 **Reasoning, step by step:**
@@ -78,6 +114,8 @@ Logging is a public API for your future on-call self. Treat it like one.
    ```
 4. Without `MDCContext`, your MDC silently disappears after the first `suspend` call. This is the most common Kotlin logging bug on JVM.
 
+**Enforcement:** review; `MDC.putCloseable(...).use { }` at the request boundary and `withContext(MDCContext())` around any `suspend` span that logs.
+
 ### 6.7 — Never log secrets or PII verbatim. Mask, redact, or omit.
 
 **Reasoning, step by step:**
@@ -87,6 +125,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 4. **Pattern (from the Expedia SDK):** a `MaskingRegexFactory` builds regexes that match sensitive field names in JSON; a `MaskJson` step applies them before logging.
 5. PII discovery is a recurring audit; assume the auditor will read your logs.
 
+**Enforcement:** secret-scanning in CI plus a recurring PII log audit; masking applied at the source via `MaskingRegexFactory`/`MaskJson`.
+
 ### 6.8 — No `println`, no `System.err`. Loggers only.
 
 **Reasoning, step by step:**
@@ -94,6 +134,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 2. `System.err` is slightly better but still bypasses level filtering and structured fields.
 3. **Exception:** CLI tools where the program's *output* is the point. Even there, use a logger for diagnostics and stdout only for the data result.
 4. Lint: detekt's `ForbiddenMethodCall` configured to catch `println`/`System.err.println` in production code.
+
+**Enforcement:** detekt `ForbiddenMethodCall` blocks `println`/`System.err.println` in production source sets.
 
 ### 6.9 — Logback or Log4j 2 as the implementation. Configured in code or YAML, not properties.
 
@@ -103,6 +145,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 3. Configuration: YAML or Groovy (Logback) / XML or YAML (Log4j 2). `*.properties` is older and less expressive.
 4. Configure per-environment: JSON output in production (aggregator-friendly), pattern output in dev (human-friendly).
 
+**Enforcement:** dependency check fails on a second SLF4J backend; review confirms YAML/Groovy/XML config, not `*.properties`.
+
 ### 6.10 — Log decoration via `LoggerDecorator` or MDC, not by formatting into the message.
 
 **Reasoning, step by step:**
@@ -111,6 +155,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 3. For correlation context, prefer MDC. For library identification, a decorator. Both work; pick by who owns the context.
 4. Don't put environment info (region, hostname) in the message. Put it in MDC or in the appender's pattern. It's the same value for every log line.
 
+**Enforcement:** review; cross-cutting context lives in a `LoggerDecorator` (interface delegation), MDC, or the appender pattern, never inlined into the message.
+
 ### 6.11 — Log on exception only at the boundary that handles it.
 
 **Reasoning, step by step:**
@@ -118,6 +164,8 @@ Logging is a public API for your future on-call self. Treat it like one.
 2. **Rule:** log when you handle. The handler knows the context that makes the log useful.
 3. Re-throwing? Don't log first. Wrapping? Log only if the wrap loses information.
 4. `logger.error(e) { "operation failed: ${describe()}" }` (kotlin-logging) or `logger.error("operation failed", e)` (SLF4J) — the throwable is a parameter, not concatenated.
+
+**Enforcement:** review; a throwable is logged once at its handling boundary, passed as a parameter, never on a rethrow path.
 
 ## Cross-references
 

@@ -2,6 +2,40 @@
 
 Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `threading` (I/O-bound, preemptive but GIL-bound), `multiprocessing` (CPU-bound, separate processes). Pick deliberately.
 
+## What good looks like
+
+```python
+import asyncio
+
+import httpx
+
+
+async def fetch_one(
+    client: httpx.AsyncClient,
+    sem: asyncio.Semaphore,
+    url: str,
+) -> int:
+    async with sem:  # bound in-flight requests
+        async with asyncio.timeout(5.0):  # every external I/O has a deadline
+            response = await client.get(url)
+            return response.status_code
+
+
+async def fetch_all(urls: list[str]) -> list[int]:
+    sem = asyncio.Semaphore(8)
+    async with httpx.AsyncClient() as client:
+        async with asyncio.TaskGroup() as tg:  # siblings cancelled on first failure
+            tasks = [tg.create_task(fetch_one(client, sem, u)) for u in urls]
+    return [t.result() for t in tasks]  # results read after the group closes
+
+
+if __name__ == "__main__":
+    codes = asyncio.run(fetch_all(["https://example.com"]))  # one entry point
+    print(codes)
+```
+
+This is asyncio for I/O-bound work (9.1), driven by a single `asyncio.run` at the entry point (9.12). The `TaskGroup` owns every task's lifecycle so no reference is dropped (9.2, 9.4); the `Semaphore` bounds concurrency so a large URL list can't open a thousand sockets at once (9.6); and `asyncio.timeout` puts a documented deadline on each external call (9.3). Results are read only after the group closes, when every task is guaranteed done.
+
 ## Rules
 
 ### 9.1 — Default to `asyncio` for new I/O-bound code.
@@ -11,6 +45,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 2. Threading is older, less expressive about lifecycles, and the GIL means it only helps for I/O-bound work anyway.
 3. Multiprocessing is for CPU-bound work and brings its own complexity (pickling, IPC, lifecycle).
 4. **Decision:** I/O-bound new code → asyncio. CPU-bound → multiprocessing or a native extension. Mixed → asyncio for the I/O, `asyncio.to_thread` for the blocking pieces.
+
+**Enforcement:** review; new I/O-bound modules use `async def`, not `threading`.
 
 ### 9.2 — `asyncio.TaskGroup` over bare `asyncio.gather` (Python 3.11+).
 
@@ -27,6 +63,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
    ```
 4. Pre-3.11: use `asyncio.gather` with explicit error handling, or migrate.
 
+**Enforcement:** lint rule flagging bare `asyncio.gather`; review for `TaskGroup` on fan-out.
+
 ### 9.3 — `asyncio.timeout` over `asyncio.wait_for` (Python 3.11+).
 
 **Reasoning, step by step:**
@@ -34,6 +72,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 2. `asyncio.wait_for(coro, timeout=5)` works but has rougher edges around cancellation propagation.
 3. **Rule:** every external async I/O has a timeout. Wrap external calls with `asyncio.timeout`. Pick a number; document the choice.
 4. The timeout should match the user-perceived SLA, not "infinity minus a bit."
+
+**Enforcement:** review; every external async call wrapped in `asyncio.timeout` with a documented value.
 
 ### 9.4 — Never `asyncio.create_task` and drop the reference.
 
@@ -50,6 +90,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
        task.add_done_callback(_background.discard)
    ```
 4. **Better:** don't fire-and-forget. Own the lifecycle with a TaskGroup or service-level scope.
+
+**Enforcement:** `ruff` `RUF006` flags unawaited `create_task` results; review for held references.
 
 ### 9.5 — Cancellation is cooperative. Honor `CancelledError`.
 
@@ -68,6 +110,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 3. Long CPU-only sections without `await` don't notice cancellation. Insert `await asyncio.sleep(0)` periodically, or split the work.
 4. `except Exception:` does *not* catch `CancelledError` in Python 3.8+ (it became `BaseException`-derived). Be explicit if you need to catch it.
 
+**Enforcement:** review; any `except` that swallows `CancelledError` must re-raise it.
+
 ### 9.6 — `asyncio.Lock`, `asyncio.Semaphore`, `asyncio.Queue` for coroutine-safe sync.
 
 **Reasoning, step by step:**
@@ -76,6 +120,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 3. `asyncio.Semaphore` for bounding concurrent operations: `async with semaphore: await heavy()` limits in-flight to the semaphore's value.
 4. `asyncio.Queue` for producer-consumer between coroutines. **Bound the queue:** `asyncio.Queue(maxsize=N)`.
 
+**Enforcement:** review; no `threading` sync primitives inside `async def`; queues declare `maxsize`.
+
 ### 9.7 — `asyncio.to_thread` for unavoidable blocking calls.
 
 **Reasoning, step by step:**
@@ -83,6 +129,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 2. `await asyncio.to_thread(sync_fn, *args)` runs the call in a worker thread and awaits the result. The event loop stays responsive.
 3. Bound the worker pool. The default `ThreadPoolExecutor` is unbounded by default in `to_thread`; set a custom executor with a real cap for high-load systems.
 4. Each `to_thread` call has a thread-context-switch cost. For tight loops over a sync library, batch the work first.
+
+**Enforcement:** review; blocking sync calls in async code go through `asyncio.to_thread` with a bounded executor.
 
 ### 9.8 — Threading: only when forced. Multiprocessing: only when CPU-bound.
 
@@ -96,6 +144,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
    - "I want it faster" without measurement → profile first.
 4. Python 3.13's PEP 703 (per-interpreter GIL) and PEP 684 are experimental — not yet a default option.
 
+**Enforcement:** review; a `threading`/`multiprocessing` choice is justified against the decision tree.
+
 ### 9.9 — `concurrent.futures` for high-level sync parallelism.
 
 **Reasoning, step by step:**
@@ -104,6 +154,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 3. `with ThreadPoolExecutor(max_workers=8) as pool:` — context-managed shutdown.
 4. For async code, prefer asyncio primitives. Use `concurrent.futures` only in sync code or to bridge.
 
+**Enforcement:** review; every executor sets an explicit `max_workers` and is context-managed.
+
 ### 9.10 — Producer-consumer with backpressure: bounded `Queue`, suspend on full.
 
 **Reasoning, step by step:**
@@ -111,6 +163,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 2. Bounded `asyncio.Queue(maxsize=N)`: `put()` suspends when full. Producers naturally backpressure.
 3. For multi-producer/multi-consumer: use queues + tasks managed by a TaskGroup. The producers and consumers are tasks; the queue mediates.
 4. Choose `maxsize` from the slowest consumer's catch-up time. Document the value.
+
+**Enforcement:** review; producer-consumer queues are bounded with a documented `maxsize`.
 
 ### 9.11 — `contextvars` for async-safe context (replaces `threading.local` for asyncio).
 
@@ -126,6 +180,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
    ```
 5. For logging integration with `contextvars`, see the logging chapter.
 
+**Enforcement:** review; request-scoped state in async code uses `ContextVar`, not `threading.local`.
+
 ### 9.12 — `asyncio.run` at the program entry point only.
 
 **Reasoning, step by step:**
@@ -133,6 +189,8 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 2. Calling `asyncio.run` inside a function called from async code is wrong — there's already a loop.
 3. Tests: use `pytest-asyncio` or `anyio` plugins. They handle the loop lifecycle.
 4. Libraries: never call `asyncio.run`. Take the coroutine, let the caller run it.
+
+**Enforcement:** review; `asyncio.run` appears only at program entry points, never in library code.
 
 ### 9.13 — Separate sync and async clients. Never mix `async def` and `def` in the same class.
 
@@ -147,12 +205,16 @@ Python concurrency has three shapes: `asyncio` (I/O-bound, cooperative), `thread
 4. **Don't name the class `BookingClientAsync`.** That's the same class-name suffix anti-pattern the Azure SDK explicitly rejects. The *module path* carries the sync/async distinction; the class name stays clean.
 5. The two classes share documentation conventions, method names, and parameter names. The only difference is the body and the `async`/`await` keywords.
 
+**Enforcement:** review; sync and async clients split across modules, no `def`/`async def` pair on one class.
+
 ### 9.14 — Async clients use `async`/`await`. Not `yield from` coroutines, not `asyncio.coroutine`.
 
 **Reasoning, step by step:**
 1. `@asyncio.coroutine` and `yield from`-based coroutines were removed in Python 3.11. Don't write new code with them; migrate legacy code when touched.
 2. `async def` + `await` is the only blessed shape.
 3. **From Azure SDK guidelines:** "DO use the `async`/`await` keywords. Do not use the yield from coroutine or asyncio.coroutine syntax."
+
+**Enforcement:** review; no `@asyncio.coroutine` or `yield from`-based coroutines in new code.
 
 ## Cross-references
 

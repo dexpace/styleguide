@@ -72,6 +72,16 @@ Python's design ("There should be one — and preferably only one — obvious wa
 13. **Performance from the outset, but pay for what you use.** `__slots__` and `frozen=True` on hot dataclasses. Generators for large/streaming data. `functools.lru_cache` for pure-function memoization. Don't pre-optimize without a profile.
 14. **Zero technical debt.** Public API is a contract — Python's lack of enforcement is not a license to break it. `__all__` declares the surface. Semver is a promise.
 
+## Deviations from Upstream
+
+This guide takes PEP 8 + PEP 20 as canonical, with PEP 484/604/695 governing types. The first entry below is a genuine softening — a place this guide deliberately relaxes the root canon to stay true to Python culture; the rest are additions the PEPs do not address (the function-size cap, and authorities layered on top of the base PEP set). Each is recorded so it can be revisited surgically.
+
+| Rule | Upstream position | Our position | Why |
+|---|---|---|---|
+| Assertion density | Root canon: "assert aggressively," 2+ per function, no caveat | Same target, but reframed as a project discipline overlay — not native Pythonic practice | Python culture is "validate at the boundary, trust internally"; an aggressive-assertion mandate reads as un-Pythonic if presented as native. We keep the density but say plainly it is an overlay the language doesn't ask for: validate at every public boundary, split compound checks, fail fast. See rule 8 above and [08-error-handling.md](./08-error-handling.md). |
+| Function size | No upstream cap (PEP 8 is silent) | 50-line hard cap, aim 10–25 | Owner decision; Tiger Style discipline, the tightest of the spine languages because Python bodies lack braces and type annotations, so vertical density runs high. See [05-functions.md](./05-functions.md) and [01-formatting-and-tooling.md](./01-formatting-and-tooling.md). |
+| Added authorities | Root table names PEP 8 + PEP 20 + PEP 484/604 | Adds the Google Python Style Guide (docstrings, module structure) and PEP 695 (modern generics) on top | The base PEPs are silent on docstring shape and predate `type`-statement generics; the additions supply taste and modern syntax the PEPs leave open, and never override them. See [14-documentation.md](./14-documentation.md) and [03-type-hints.md](./03-type-hints.md). |
+
 ## Influences
 
 - **[PEP 8](https://peps.python.org/pep-0008/), [PEP 20](https://peps.python.org/pep-0020/)** — canonical Python.
@@ -85,3 +95,5 @@ Python's design ("There should be one — and preferably only one — obvious wa
 ## Applying Style Changes
 
 When adopting a new rule or migrating away from a deprecated pattern, apply the change at the **module / package level or larger** — never mix two styles within the same module. A half-migrated module is more confusing than either end state.
+
+Perfection over technical debt — debt never gets paid

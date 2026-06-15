@@ -92,6 +92,8 @@ These add to the 15 rules in the [generic guide root](../kotlin/README.md). When
 
 ---
 
+Zero technical debt holds here as everywhere: what ships meets the design goals. **Perfection over technical debt — debt never gets paid.** A JVM service runs unattended for months; the platform-type leak or hand-rolled `open` shortcut taken today is the NPE or framework break someone else debugs in production.
+
 ## Influences
 
 - **[Kotlin documentation: Java interop](https://kotlinlang.org/docs/java-interop.html), [Calling Kotlin from Java](https://kotlinlang.org/docs/java-to-kotlin-interop.html)** — canonical interop reference.

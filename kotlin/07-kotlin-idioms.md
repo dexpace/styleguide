@@ -2,6 +2,38 @@
 
 Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywork. Used carelessly, it produces code that looks clever and reads like a puzzle.
 
+## What good looks like
+
+```kotlin
+/** One small step in the request pipeline; SAM-converted at the call site (7.14). */
+fun interface RequestStep { operator fun invoke(req: Request): Request }
+
+private val addAuth = RequestStep { it.with(header = "Authorization" to "Bearer $token") }
+private val addTrace = RequestStep { it.with(header = "X-Trace" to newTraceId()) }
+
+/** Composes steps by folding the request through the list — no inheritance, each step testable. */
+class Pipeline(private val steps: List<RequestStep>) {
+    fun run(initial: Request): Request = steps.fold(initial) { req, step -> step(req) }
+}
+
+fun buildRequest(url: String, token: String): Request =
+    Request.Builder()
+        .apply {                                 // configure-then-return: receiver as `this`
+            setUrl(url)
+            setTimeout(5.seconds)
+        }
+        .build()
+        .also { log.debug("built ${it.method} ${it.url}") } // side-effect-then-pass-along
+
+fun classify(status: Int): String = when {       // when as an expression, single val
+    status < 400 -> "ok"
+    status < 500 -> "client-error"
+    else         -> "server-error"
+}
+```
+
+`RequestStep` is a `fun interface` so the lambdas SAM-convert and read as plain blocks (7.14); its `operator fun invoke` lets `step(req)` and `addAuth(req)` call the step as if it were a function (7.8). `Pipeline` composes via list-of-steps + `fold` rather than a template-method hierarchy (7.13). `apply` returns the receiver while exposing it as `this`, and `also` passes the value along while logging (7.3). `classify` uses `when` as an expression so the result is one `val` (7.5), and the header pair leans on `to` as an infix builder (7.9).
+
 ## Rules
 
 ### 7.1 — Class delegation (`by`) is the default for decoration.
@@ -21,6 +53,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
    ```
    `Logger by logger` covers every method we *don't* override; the explicit overrides intercept exactly what we care about.
 
+**Enforcement:** review; decorators delegate with `by`, hand-written forwarding only where the delegate is swappable.
+
 ### 7.2 — Property delegation: `by lazy`, `by Delegates.observable`, then custom.
 
 **Reasoning, step by step:**
@@ -30,6 +64,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 4. `by map` — back a property by a `Map<String, *>` entry.
 5. **Custom delegate:** implement `operator fun getValue(thisRef: T, prop: KProperty<*>): V` (and `setValue` for `var`). Worth it when the same backing pattern appears in 3+ properties. Not worth it for one-offs.
 6. **Anti-pattern:** custom delegate where a regular `val` + a helper function would do the same job. Delegation is for *backing-field* discipline, not for hiding logic.
+
+**Enforcement:** review; reach for stdlib delegates (`lazy`, `Delegates.*`) first, custom delegates only past the 3-property threshold.
 
 ### 7.3 — Scope functions: pick by what should be returned.
 
@@ -55,6 +91,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 4. **Don't chain scope functions for the sake of chaining.** `?.let { it.foo }?.let { it.bar }` should be `?.foo?.bar`.
 5. **Don't reach for a scope function when a named local is clearer.** A `val parsed = parse(raw)` followed by three lines of work is often more readable than a `with(parse(raw)) { ... }` block.
 
+**Enforcement:** review against the return/receiver decision table; flag chained scope functions that a `?.` path would replace.
+
 ### 7.4 — Type-safe builders / lambda-with-receiver for grouped construction.
 
 **Reasoning, step by step:**
@@ -63,6 +101,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 3. Use type-safe builders when (a) the construction has nested structure, (b) the same shape is built repeatedly, (c) the builder methods would otherwise return `this` for chaining.
 4. Stdlib utilities to lean on: `buildString`, `buildList`, `buildMap`, `buildSet`.
 5. **Authoring your own DSL:** annotate the receiver type with `@DslMarker` to prevent accidental access to outer receivers from inner blocks. This is the difference between "I built a DSL" and "I built a footgun."
+
+**Enforcement:** review; prefer `buildString`/`buildList`/`buildMap`/`buildSet`, and require `@DslMarker` on every hand-authored builder receiver.
 
 ### 7.5 — Expression-oriented forms: `when`, `if`, `try` as expressions.
 
@@ -79,6 +119,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 3. `try` as an expression: `val parsed = try { Json.decode(raw) } catch (e: JsonException) { null }`.
 4. Exhaustive `when` on a sealed subject: omit `else` so the compiler enforces total coverage. See chapter 08.
 
+**Enforcement:** review; assign once from the expression form rather than mutating a `var` across branches.
+
 ### 7.6 — String templates over concatenation.
 
 **Reasoning, step by step:**
@@ -87,12 +129,16 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 3. Multi-line string templates use raw strings (`"""..."""`). Use `.trimIndent()` to strip leading whitespace.
 4. **Anti-pattern:** template with a complex expression inside. If `${complex.expression}` is hard to read, lift it to a `val` above.
 
+**Enforcement:** review; string templates over `+` concatenation, complex `${...}` lifted to a named `val`.
+
 ### 7.7 — Single-expression overrides and one-liners.
 
 **Reasoning, step by step:**
 1. `override fun toString(): String = "$method $url"` is enough. No `{ return ... }`, no `: Unit`.
 2. Use the expression form for accessor-like overrides; reserve block bodies for genuine logic.
 3. Works for properties too: `override val isEmpty: Boolean get() = size == 0`.
+
+**Enforcement:** review; single-expression `=` form for accessor-like overrides, block bodies reserved for genuine logic.
 
 ### 7.8 — Operator overloading: only when the symbol *is* the domain operation.
 
@@ -103,6 +149,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 4. The most useful overloads: `plus`/`minus`/`times`/`div` for numeric-shaped types; `get`/`set` for collection-shaped types; `invoke` for command-shaped types (`val parse = JsonParser(); parse(input)`); `contains` (`in`) for set-shaped types; `compareTo` (`<`/`>`) for ordered types.
 5. **Avoid:** `unaryMinus` cleverness, `rangeTo`/`rangeUntil` outside numeric/temporal contexts.
 
+**Enforcement:** review; an overloaded operator is rejected unless the symbol's sole domain meaning matches the operation.
+
 ### 7.9 — `infix` functions: read like English in the call site.
 
 **Reasoning, step by step:**
@@ -110,6 +158,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 2. Use `infix` when the call site reads better as `subject verb object` than as `subject.verb(object)`. Examples: `1 to "a"` (in `mapOf`), `value shouldBe expected` (in test DSLs).
 3. **Don't** make `infix` something that reads worse: `account credit amount` versus `account.credit(amount)`. The dot is clearer.
 4. `infix` functions take exactly one parameter, are member or extension, and don't accept `vararg` or default-value parameters.
+
+**Enforcement:** review; `infix` only where `subject verb object` reads better than the dotted call.
 
 ### 7.10 — Type aliases for *intent*, not for *substitution*.
 
@@ -119,6 +169,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 3. `typealias UserMap = Map<UserId, User>` is right: it shortens a verbose generic.
 4. **Rule:** type aliases are documentation. They don't change types, they don't change ABI, they don't change anything except how the source reads. Use them only when a *name* makes the source read measurably better.
 
+**Enforcement:** review; a `typealias` used for type safety is rejected in favor of a `value class`.
+
 ### 7.11 — Destructuring is positional. Choose carefully.
 
 **Reasoning, step by step:**
@@ -126,6 +178,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 2. Reordering data-class fields silently breaks every destructuring call site. This is fine for your *own* tightly-coupled types; dangerous for types you don't control.
 3. Use destructuring when (a) the positional reading matches the data — coordinates, key/value pairs, success/error tuples — and (b) the receiver type is unlikely to gain new fields.
 4. `_` to ignore unwanted components: `val (_, value) = entry`.
+
+**Enforcement:** review; destructure only types you control whose positional reading matches the data.
 
 ### 7.12 — Implement stdlib contracts instead of inventing parallel ones.
 
@@ -141,6 +195,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
    ```
    `Paginator : Iterator<T>` lets every caller use `while (paginator.hasNext())` and `for (page in paginator)`. No custom `nextPage()` contract.
 4. **Anti-pattern:** rolling your own `Disposable` when `AutoCloseable` works. Rolling your own `Stream` when `Sequence`/`Flow` works. Rolling your own `Either` when sealed `Result<T, E>` works.
+
+**Enforcement:** review; implement the stdlib contract (`Iterator`, `Comparable`, `AutoCloseable`, `Sequence`/`Flow`) rather than a parallel interface.
 
 ### 7.13 — Pipeline composition via list-of-steps + `fold`.
 
@@ -158,6 +214,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 4. Use this in place of: template-method patterns, "abstract base classes with overridable hooks," chains of decorators that each subclass the previous.
 5. Bound the list. `List<RequestStep>` of size 200 means 200 function calls per request — measure if you suspect this is hot.
 
+**Enforcement:** review; compose linear step sequences as list-of-steps + `fold`, not template-method or decorator chains.
+
 ### 7.14 — Trailing lambdas and SAM conversion.
 
 **Reasoning, step by step:**
@@ -165,6 +223,8 @@ Kotlin's syntactic surface is large. Used deliberately, it removes Java's busywo
 2. When the only parameter is a lambda, drop the parentheses: `synchronized { ... }`.
 3. Kotlin allows SAM conversion for *Java* functional interfaces only by default. For Kotlin-defined `fun interface`, SAM conversion is enabled — prefer `fun interface` over a regular interface when there's exactly one abstract method.
 4. **Anti-pattern:** trailing lambda on a function whose last parameter *isn't* meant to be lambda-style. If the lambda would obscure the call, write `f({ ... })` or named arguments.
+
+**Enforcement:** review; `fun interface` for single-method types so SAM conversion applies, trailing-lambda syntax only where the last parameter is lambda-shaped.
 
 ## Cross-references
 

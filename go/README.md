@@ -58,3 +58,19 @@ Go is closest to the Zig/Elixir ideal: no inheritance, no classes, no exceptions
 8. **Assert aggressively.** Validate at every public boundary. Return errors, never accept garbage silently.
 9. **Think about performance from the outset.** Stack over heap. Buffer reuse. Understand escape analysis.
 10. **Zero technical debt.** Do it right the first time.
+
+## Deviations from Upstream
+
+This guide takes Google's Go Style Guide as canonical. The entries below are places where idiomatic Go — codified by Google and Effective Go — wins over the root canon's cross-language defaults, plus the function-size cap Google does not address. Each is recorded so it can be revisited surgically.
+
+| Rule | Upstream position | Our position | Why |
+|---|---|---|---|
+| Pointer-receiver mutation and `Set*` setters | Effective Go / Google: pointer receivers mutate in place; setters take a `Set` prefix | Permitted and idiomatic, despite the root canon's "immutable by default / transform, don't mutate" | Go has no `with`-expression and no cheap structural copy; a pointer receiver that mutates is the language's native idiom for stateful types, and `Set*` is the canonical setter name. Effective Go wins for Go. The canon's spirit still holds — return new values where it's natural, and copy slices and maps across boundaries (see [05-api-design.md](./05-api-design.md)). |
+| Bounded recursion in library code | Not addressed | Recursion permitted only where its depth is provably bounded by an explicit, asserted limit | The canon leans no-recursion, but a depth-capped parser that checks an incrementing counter against a hard cap and recovers at the public boundary is provably bounded — the property the canon actually wants. Unbounded recursion stays banned. See [05-api-design.md](./05-api-design.md) and [03-error-handling.md](./03-error-handling.md). |
+| Function size | No upstream cap (Google rejects `funlen`) | 70-line hard cap; aim 20–40 | Owner decision; Tiger Style discipline. The 70 here is the level the TS, Kotlin, and C# caps are set against. See [01-formatting-and-tooling.md](./01-formatting-and-tooling.md). |
+
+## Zero Technical Debt
+
+What exists meets the design goals. Do it right the first time; the second chance may never come.
+
+Perfection over technical debt — debt never gets paid

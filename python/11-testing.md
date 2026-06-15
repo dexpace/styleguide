@@ -2,6 +2,43 @@
 
 Tests are code that runs on every push. They earn their keep when they fail meaningfully on real regressions and pass quietly otherwise.
 
+## What good looks like
+
+```python
+class FixedClock:
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
+
+
+@pytest.fixture
+def clock() -> FixedClock:
+    return FixedClock(datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+
+@pytest.fixture
+def repo() -> FakeUserRepository:
+    return FakeUserRepository()
+
+
+def test_register_persists_user_and_stamps_created_at_when_email_is_new(
+    repo: FakeUserRepository, clock: FixedClock
+) -> None:
+    # arrange
+    service = RegistrationService(repo, clock)
+
+    # act
+    user = service.register(email="t@example.com")
+
+    # assert
+    assert repo.find(user.id) == user
+    assert user.created_at == datetime(2025, 1, 1, tzinfo=timezone.utc)
+```
+
+The test name reads as an English sentence (11.2); arrange/act/assert sections are blank-line-separated with one concern (11.3); `clock` and `repo` are deliberately scoped fixtures, fresh per test (11.5, 11.6); `FakeUserRepository` is a hand-rolled domain fake while time arrives through an injected `FixedClock` rather than `datetime.now()` (11.8, 11.9); and the paired assertions check both persistence and the stamped timestamp (11.13).
+
 ## Rules
 
 ### 11.1 — `pytest`, not `unittest`. Always.
@@ -12,6 +49,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Write tests as top-level functions. Group with `class Test*:` only when fixtures are class-scoped and shared.
 4. Migrate existing `unittest` code when you touch it.
 
+**Enforcement:** review; CI runs `pytest`, and a `flake8`/`ruff` check flags `unittest.TestCase` subclasses in `tests/`.
+
 ### 11.2 — Test names are sentences in `snake_case`.
 
 **Reasoning, step by step:**
@@ -20,6 +59,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Pattern: `test_<action>_<expected outcome>_when_<condition>`. Variations are fine; reading aloud as English is not optional.
 4. Test files: `tests/test_*.py`. pytest discovers automatically.
 
+**Enforcement:** review; `pytest`'s `python_files = test_*.py` discovery enforces the file naming.
+
 ### 11.3 — Arrange / act / assert. One concern per test.
 
 **Reasoning, step by step:**
@@ -27,6 +68,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. One *concern* per test. If a test asserts five unrelated facts, splitting improves failure messages.
 3. Acceptable: multiple assertions that all verify the same concern.
 4. **Anti-pattern:** god-tests that exercise an entire feature in one function. They fail in unhelpful ways and resist refactoring.
+
+**Enforcement:** review; oversized test bodies flagged by a function-length lint.
 
 ### 11.4 — `@pytest.mark.parametrize` for table-driven cases.
 
@@ -47,6 +90,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
    ```
 3. Each row is a separate test with its own failure context. The `ids=` parameter labels failures readably.
 4. For complex inputs, use a `@dataclass` parameter value rather than a tuple. Readable failure output.
+
+**Enforcement:** review; copy-pasted near-identical test bodies rejected in favor of a parametrized table.
 
 ### 11.5 — Fixtures over `setUp`/`tearDown`. Scope them deliberately.
 
@@ -69,6 +114,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
    ```
 5. Share fixtures across files via `conftest.py` at the test directory's root.
 
+**Enforcement:** review; `setUp`/`tearDown` methods flagged alongside the `unittest.TestCase` lint (11.1).
+
 ### 11.6 — Tests are independent. No order, no shared state.
 
 **Reasoning, step by step:**
@@ -77,6 +124,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Each test gets fresh fixtures. Session-scoped fixtures are for *immutable* shared data only (a parsed schema, a fixed clock).
 4. **Parallel-by-default:** assume `pytest -n auto` (with `pytest-xdist`) will run. Anything assuming serial order is a future flake.
 
+**Enforcement:** CI runs `pytest -n auto` and a randomized-order plugin (`pytest-randomly`); order-dependent tests fail there.
+
 ### 11.7 — Use real implementations where possible. Mock at the genuine seam.
 
 **Reasoning, step by step:**
@@ -84,6 +133,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Mocking everything makes the test re-state the implementation. The test passes when the implementation is wrong in the way you mocked.
 3. The genuine seam is the *external boundary*: HTTP, database, clock, filesystem.
 4. **Tools:** `unittest.mock.Mock`/`MagicMock` from stdlib; `pytest-mock` for the `mocker` fixture; hand-rolled Protocol-conforming fakes are often clearest.
+
+**Enforcement:** review; mocks reaching past the external boundary into domain code are rejected.
 
 ### 11.8 — Hand-rolled fakes for domain types. Mocks for external IO.
 
@@ -104,6 +155,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
            return self._by_id.get(user_id)
    ```
 
+**Enforcement:** review; a `MagicMock` standing in for a domain repository or value object is rejected in favor of a fake.
+
 ### 11.9 — Time, randomness, IDs: injected, not pulled from the wild.
 
 **Reasoning, step by step:**
@@ -112,6 +165,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Tests use a deterministic clock and seeded random. The fixture provides them.
 4. The injection cost is one constructor parameter. The testability payoff is permanent.
 
+**Enforcement:** review; a lint flags `datetime.now`, `uuid.uuid4`, and `random.*` reached directly inside production modules.
+
 ### 11.10 — Property-based tests where invariants are natural: `hypothesis`.
 
 **Reasoning, step by step:**
@@ -119,6 +174,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Good properties: round-trip (`decode(encode(x)) == x`), idempotence (`f(f(x)) == f(x)`), monotonicity (`a <= b ⇒ f(a) <= f(b)`).
 3. Don't use it as a clever way to run the same test against random nonsense.
 4. **Shrinking** is the killer feature: failed tests shrink to a minimal failing case. `hypothesis` shrinks well.
+
+**Enforcement:** review; round-trip, idempotence, and monotonicity invariants expected to carry a `hypothesis` property test.
 
 ### 11.11 — Async tests: `pytest-asyncio` with `@pytest.mark.asyncio`.
 
@@ -131,6 +188,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Alternative: `anyio`'s test plugin if you target multiple async libraries.
 3. For time-based async tests, use `freezegun` or a fake clock — don't `await asyncio.sleep(1)` in tests.
 
+**Enforcement:** `asyncio_mode = "auto"` set in `pyproject.toml`; review confirms async tests use the plugin, not ad-hoc event-loop wiring.
+
 ### 11.12 — No `time.sleep` in tests. Use polling, fake clocks, or async test machinery.
 
 **Reasoning, step by step:**
@@ -138,6 +197,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. For async timing: fake the clock or use `anyio.move_on_after`.
 3. For waiting on a condition: poll with a timeout.
 4. A test that needs to sleep "to give the thread time to start" has the wrong synchronization model.
+
+**Enforcement:** review; a lint flags `time.sleep` under `tests/`.
 
 ### 11.13 — Assertion density mirrors production: 2+ per test on average.
 
@@ -147,6 +208,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 3. Pair-assertion: verify the same property two ways. After `sort(xs)`, assert (a) `len(xs)` unchanged and (b) ordering invariant holds.
 4. Don't pile up unrelated assertions to hit a number.
 
+**Enforcement:** review; single-assertion tests of complex outcomes questioned for a missing negative or paired check.
+
 ### 11.14 — Coverage is a *floor*, not a ceiling. 100% coverage with 0% meaning is worse than 70% with deliberate tests.
 
 **Reasoning, step by step:**
@@ -154,6 +217,8 @@ Tests are code that runs on every push. They earn their keep when they fail mean
 2. Set a minimum (often 80%) and fail builds below. Don't gloat about 100%.
 3. Focus tests on: behavior at boundaries, edge cases (empty, max, off-by-one), error paths, regressions.
 4. Mutation testing (`mutmut`, `cosmic-ray`) is the next level — but expensive. Use selectively.
+
+**Enforcement:** CI fails the build below the configured `--cov-fail-under` threshold.
 
 ## Cross-references
 

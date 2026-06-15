@@ -2,6 +2,30 @@
 
 Designing the surface other code calls. The cost of a bad public API is paid by every caller, in every refactor, forever.
 
+## What good looks like
+
+```kotlin
+/** Consumer-defined: the narrowest read surface a charge needs (10.2). */
+fun interface AccountReader { // SAM-convertible, callable as reader(id) (10.3)
+    operator fun invoke(id: AccountId): Account?
+}
+
+class BillingService internal constructor( // ctor not part of the contract (10.1)
+    private val readAccount: AccountReader,
+) {
+    /** Explicit return type — the body can change, the contract can't (10.8). */
+    fun charge(id: AccountId, amount: Cents): ChargeResult {
+        val account = readAccount(id) ?: return ChargeResult.UnknownAccount
+        return account.debit(amount)
+    }
+
+    /** Read-only view out; an internal MutableList never leaks (10.12). */
+    fun history(id: AccountId): List<Charge> = ledger[id].orEmpty()
+}
+```
+
+`AccountReader` is a one-method `fun interface` defined by what `charge` consumes, not by some 27-method repository (10.2, 10.3), and it is invoked as `readAccount(id)` through `operator fun invoke`. The primary constructor is `internal`, so collaborators inject but outsiders cannot bind to it (10.1). `charge` and `history` both declare explicit return types (10.8), and `history` hands back a read-only `List` rather than the backing `MutableList` (10.12).
+
 ## Rules
 
 ### 10.1 — `internal` is the default for things consumed within a module. `public` requires intent.
@@ -13,6 +37,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 4. `internal` is the freedom-to-refactor visibility. You can rename, retype, and delete `internal` symbols without breaking external callers.
 5. Once `public`, removal/rename is a deprecation cycle. Get it right *before* the first release.
 
+**Enforcement:** `explicitApi()` mode (warns on inferred-public declarations); review for the narrowest visibility that compiles.
+
 ### 10.2 — Small interfaces. Define them by the consumer's need, not the producer's surface.
 
 **Reasoning, step by step:**
@@ -22,13 +48,17 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 4. **Anti-pattern:** "anticipatory" methods on an interface because "we might need this someday." Add them when the second caller appears.
 5. **Anti-pattern:** an interface with one implementation that exists only "for testing." If the implementation is the only one, fake it via constructor injection of dependencies, not via an interface layer.
 
+**Enforcement:** review; interfaces sized to the consumer, no anticipatory or test-only methods.
+
 ### 10.3 — `fun interface` for single-method interfaces consumed as lambdas.
 
 **Reasoning, step by step:**
 1. Kotlin's `fun interface` enables SAM conversion: callers can pass a lambda where the interface is expected.
-2. Use it for callbacks, hooks, single-method strategies. `fun interface RequestStep { fun apply(req: Request): Request }` lets callers write `pipeline.add { it.copy(...) }`.
+2. Use it for callbacks, hooks, single-method strategies. `fun interface RequestStep { operator fun invoke(req: Request): Request }` lets callers write `pipeline.add { it.copy(...) }`.
 3. Don't use `fun interface` when the abstract method is part of a richer contract or when SAM conversion would hide intent.
 4. For Java callers, a Kotlin `fun interface` is just a SAM interface — interop is seamless.
+
+**Enforcement:** review; `fun interface` for lambda-consumed single-method contracts, plain `interface` when the method is part of a richer one.
 
 ### 10.4 — Generics: variance from the *use site* perspective. `out` for producers, `in` for consumers.
 
@@ -39,6 +69,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 4. Use-site variance (`List<out T>`) only when the type can't be declared variant (e.g., it's both producer and consumer at different methods).
 5. **Don't reach for variance** prematurely. Many generic types are fine as invariant — the compiler will tell you when variance is needed.
 
+**Enforcement:** the compiler rejects produced-`in`/consumed-`out` misuse; review for declaration-site variance over use-site wildcards.
+
 ### 10.5 — `reified` for generic dispatch on a runtime type.
 
 **Reasoning, step by step:**
@@ -46,6 +78,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 2. `inline fun <reified T> Any.castOrNull(): T? = this as? T` — works because the type is known at the call site and inlined.
 3. Use `reified` to (a) avoid passing a `Class<T>` parameter, (b) implement `instanceOf` checks generically, (c) deserialize without `KType` plumbing.
 4. **Limit:** `reified` requires `inline`. Both come together.
+
+**Enforcement:** the compiler requires `inline` for `reified`; review that it replaces a `Class<T>`/`KType` parameter rather than padding a hot inline path.
 
 ### 10.6 — Default arguments beat builders. Builders beat overload chains.
 
@@ -63,6 +97,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
    ```
    Use `@DslMarker` on the receiver type.
 
+**Enforcement:** review; default + named args under ~7 params, a `@DslMarker` builder above that, never telescoping constructors.
+
 ### 10.7 — `@RequiresOptIn` for experimental, unstable, or dangerous API.
 
 **Reasoning, step by step:**
@@ -74,6 +110,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 3. Annotate at the *source* of the unstable API; callers see the require-opt-in warning.
 4. **Note:** `@RequiresOptIn` is not for permission management. It's for *forcing the caller to read the docs*.
 
+**Enforcement:** the compiler emits the opt-in warning/error at every unannotated call site; review that unstable APIs carry the marker.
+
 ### 10.8 — Public functions have explicit return types. Always.
 
 **Reasoning, step by step:**
@@ -81,6 +119,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 2. Write the return type. The reader of the API doesn't need to read the body to learn what it returns.
 3. Same rule for public properties.
 4. `internal` and `private` may rely on inference where it's obvious. The trade-off is local.
+
+**Enforcement:** `explicitApi()` mode requires explicit types on public declarations; binary-compatibility validator catches drift.
 
 ### 10.9 — Stable identifiers. Don't churn names.
 
@@ -90,6 +130,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 3. To deprecate: `@Deprecated("Use newName(...) instead", ReplaceWith("newName(...)"))`. Keep the old name shimmed for a release cycle.
 4. To rename internally: `internal` only, refactor freely. That's the value of `internal`.
 
+**Enforcement:** binary-compatibility validator gates the public ABI in CI; renames of publics go through `@Deprecated(ReplaceWith(...))`.
+
 ### 10.10 — Pipeline pattern for composed transformations (vs. inheritance hierarchies).
 
 **Reasoning, step by step:**
@@ -97,19 +139,21 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 2. Each step is one class (or `fun interface`) with one responsibility. Steps are composable, testable, swappable.
 3. **Worked pattern (Expedia SDK):**
    ```kotlin
-   fun interface RequestStep { fun apply(req: Request): Request }
-   fun interface ResponseStep { fun apply(res: Response): Response }
+   fun interface RequestStep { operator fun invoke(req: Request): Request }
+   fun interface ResponseStep { operator fun invoke(res: Response): Response }
 
    class ExecutionPipeline(
        val requestSteps: List<RequestStep>,
        val responseSteps: List<ResponseStep>,
    ) {
        fun process(req: Request): Response =
-           respond(send(requestSteps.fold(req) { acc, s -> s.apply(acc) }))
-               .let { initial -> responseSteps.fold(initial) { acc, s -> s.apply(acc) } }
+           respond(send(requestSteps.fold(req) { acc, s -> s(acc) }))
+               .let { initial -> responseSteps.fold(initial) { acc, s -> s(acc) } }
    }
    ```
 4. Inversion of control: callers compose pipelines from steps. Authors add steps without changing existing ones.
+
+**Enforcement:** review; composed transformations are `List<Step>` + `fold`, not `open` hooks on an abstract base.
 
 ### 10.11 — Suspend functions in public APIs commit you to coroutine callers.
 
@@ -119,6 +163,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 3. For "both," provide two functions: `suspend fun load(): User` for Kotlin and `fun loadAsync(): CompletableFuture<User>` for Java/sync. The async version is a thin bridge.
 4. Don't expose `Flow` to Java callers without a bridge — Flow is a coroutine concept.
 
+**Enforcement:** review; `suspend`/`Flow` in a public API is a deliberate coroutine-caller commitment, with a `CompletableFuture` bridge where Java/sync callers must be served.
+
 ### 10.12 — Don't expose mutable types in public API.
 
 **Reasoning, step by step:**
@@ -126,6 +172,8 @@ Designing the surface other code calls. The cost of a bad public API is paid by 
 2. Returning `List<T>` (read-only view) is the default. Return `List<T>.toList()` if you genuinely need an immutable snapshot.
 3. Accepting `MutableList<T>` as a parameter forces callers to convert. Accept `List<T>` (or `Iterable<T>`) and copy inside if you need to mutate.
 4. Same applies to `Map`, `Set`, `Collection`.
+
+**Enforcement:** review; public signatures use read-only `List`/`Map`/`Set`/`Collection`, never their `Mutable` counterparts.
 
 ## Cross-references
 

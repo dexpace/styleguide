@@ -2,6 +2,33 @@
 
 Formatting is **not** a matter of taste. We delegate to tools and disagree elsewhere.
 
+## What good looks like
+
+```kotlin
+package billing
+
+import billing.model.Invoice
+import billing.model.LineItem
+
+/** Renders a one-line summary; single expression, explicit return type. */
+fun summarize(invoice: Invoice): String =
+    "${invoice.id}: ${invoice.lineItems.size} items, ${invoice.total}"
+
+/** Block body the moment a local `val` enters; no `run { … }` to fake an expression. */
+fun describe(item: LineItem): String {
+    val label = item.name.trim()
+    val qty = item.quantity
+
+    return when {
+        qty <= 0 -> "$label (none)"
+        qty == 1 -> label
+        else -> "$label ×$qty"
+    }
+}
+```
+
+Both functions stay well under the size cap and read on one screen (1.5); `summarize` uses an expression body while `describe` switches to a block the moment a local `val` appears (1.4); imports are explicit and sorted, no wildcards (1.6); the blank line inside `describe` separates setup from the `when` (1.8); `summarize` and `describe` are one cohesive family per file (1.7); lines stay inside 120 columns (1.2). `ktlint` formats it and `detekt` would pass it unchanged (1.1).
+
 ## Rules
 
 ### 1.1 — `ktlint` is the formatter. `detekt` is the linter. CI enforces both.
@@ -15,6 +42,8 @@ Formatting is **not** a matter of taste. We delegate to tools and disagree elsew
 
 **Configuration:** keep `.editorconfig` at the repo root. Pin tool versions in your build (Gradle version catalog or equivalent).
 
+**Enforcement:** `ktlintCheck` and `detekt` Gradle tasks wired into the CI `check` lifecycle; PRs fail on a non-zero exit.
+
 ### 1.2 — Line length is 120 columns. Hard limit.
 
 **Reasoning, step by step:**
@@ -23,6 +52,8 @@ Formatting is **not** a matter of taste. We delegate to tools and disagree elsew
 3. Wrap *at semantic boundaries*: between arguments, after `=`, between chained `.` calls — not mid-expression.
 4. If a line still needs to wrap after argument-wrapping, the function is doing too much.
 
+**Enforcement:** ktlint `max-line-length` set to 120 in `.editorconfig`; the `max-line-length` rule reports overruns.
+
 ### 1.3 — Trailing commas everywhere they're allowed.
 
 **Reasoning, step by step:**
@@ -30,6 +61,8 @@ Formatting is **not** a matter of taste. We delegate to tools and disagree elsew
 2. They make swapping argument order a one-line change.
 3. Kotlin 1.4+ allows them in argument lists, parameter lists, `when` entries, destructuring, and collection literals. Use them in all of these.
 4. `ktlint` enforces this when configured; configure it.
+
+**Enforcement:** ktlint `trailing-comma-on-call-site` and `trailing-comma-on-declaration-site` rules enabled in `.editorconfig`.
 
 ### 1.4 — Expression bodies for single-expression functions.
 
@@ -58,6 +91,8 @@ fun displayName(user: User) = run {
 }
 ```
 
+**Enforcement:** review; detekt has no expression-body rule, so reviewers reject `run { … }` wrappers and multi-statement bodies forced into `=`.
+
 ### 1.5 — Function-size cap: 60 lines, hard. Aim 15–30.
 
 **Reasoning, step by step:**
@@ -67,12 +102,16 @@ fun displayName(user: User) = run {
 4. If a function approaches 60, the right fix is decomposition — extract a private helper, a `when` over a sealed class, or a chained `Sequence` pipeline.
 5. The 60-line cap is a *signal*, not a target. If you need 35 lines to be clear, write 35 lines. Don't compress for the sake of the number.
 
+**Enforcement:** detekt `LongMethod` with `threshold: 60` fails the build; reviewers flag anything past the 15–30 aim.
+
 ### 1.6 — Imports: explicit, sorted, no wildcards.
 
 **Reasoning, step by step:**
 1. Wildcard imports (`import foo.*`) break grep, hide which symbols you depend on, and create silent collisions when upstream adds a name.
 2. Sort imports alphabetically; group as `ktlint` orders them. No manual grouping that fights the tool.
 3. **Exception:** the official Kotlin style permits wildcards for `kotlinx.android.synthetic` and a few similar generated packages; those are deprecated anyway and don't apply here.
+
+**Enforcement:** ktlint `no-wildcard-imports` and `import-ordering` rules; detekt `WildcardImport` as a backstop.
 
 ### 1.7 — One top-level declaration per logical unit, not per file.
 
@@ -82,6 +121,8 @@ fun displayName(user: User) = run {
 3. Do **not** group unrelated declarations because they happen to start with the same letter.
 4. File name matches the *primary* declaration. If no declaration dominates, name the file after the topic (`Json.kt`, `TimeFormat.kt`).
 
+**Enforcement:** review; cohesion and file naming are judgment calls no linter measures.
+
 ### 1.8 — Blank lines as logical separators.
 
 **Reasoning, step by step:**
@@ -89,6 +130,8 @@ fun displayName(user: User) = run {
 2. One blank line between logical sections inside a function. One blank line between top-level declarations. Two blank lines between *clusters* of declarations only if the file is large.
 3. Never two consecutive blank lines inside a function.
 4. No trailing whitespace; the formatter removes it.
+
+**Enforcement:** ktlint `no-consecutive-blank-lines` and `no-trailing-spaces` rules auto-fix on format.
 
 ### 1.9 — Conditionals: no Yoda, no naked `if` without braces.
 
@@ -98,12 +141,16 @@ fun displayName(user: User) = run {
 3. `if` *expression* on one line is fine: `val y = if (x) a else b`. That's an expression, not a statement.
 4. `when` should be exhaustive for sealed/enum subjects (see chapter 08).
 
+**Enforcement:** detekt `MandatoryBracesIfStatements` for naked `if`; reviewers reject Yoda conditions.
+
 ### 1.10 — Tooling drift is a bug.
 
 **Reasoning, step by step:**
 1. If the formatter and the codebase disagree, *one* of them is wrong. Fix the rule or fix the code.
 2. Pin tool versions. Don't let `latest` ratchet your project quietly.
 3. Format-on-save in IDE; format-on-commit in pre-commit hook; format-check in CI. Three rings of defense.
+
+**Enforcement:** version pins in the Gradle version catalog; a pre-commit hook plus the CI `check` task close the loop.
 
 ## Cross-references
 

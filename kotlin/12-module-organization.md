@@ -2,6 +2,27 @@
 
 How code is grouped, named, and exposed across boundaries. The shape of your module graph constrains every refactor.
 
+## What good looks like
+
+```text
+checkout-service/                         # one module per deployable (12.3)
+├── README.md                             # what it does, who calls it, entry points (12.8)
+├── api/checkout-service.api              # tracked public-API snapshot (12.6)
+└── src/
+    ├── main/kotlin/com/acme/checkout/    # path mirrors package (12.2)
+    │   ├── api/CheckoutEndpoint.kt       # public surface — grouped by feature (12.1)
+    │   ├── domain/Cart.kt                # internal: visible module-wide, not outside (12.4)
+    │   └── storage/CartRepository.kt
+    ├── main/generated/kotlin/            # generator output, never hand-edited (12.7)
+    └── test/kotlin/com/acme/checkout/    # same package → tests reach internal symbols (12.9)
+        └── api/CheckoutEndpointTest.kt
+
+common/                                   # narrow shared module: DTOs, errors only (12.1)
+└── src/main/kotlin/com/acme/common/
+```
+
+`checkout` is one feature-shaped package, not scattered `controllers`/`services`/`repositories` (12.1), and the source tree mirrors the package exactly (12.2). The deployable is a single module (12.3) whose tracked `.api` snapshot makes every public-surface change visible in review (12.6); `domain`/`storage` stay `internal` (12.4). `common` depends on no feature, so the graph stays acyclic (12.5). Generated code is quarantined (12.7), tests mirror production packages (12.9), and the module documents itself (12.8).
+
 ## Rules
 
 ### 12.1 — Group by feature, not by technical layer.
@@ -12,12 +33,16 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 3. Feature-shaped layout localizes change: a new checkout requirement modifies the `checkout` package and nothing else.
 4. Cross-feature shared code (DTOs, primitive types, errors) lives in a sibling `common` or `shared` package. Keep this minimal — every entry pulls every feature toward it.
 
+**Enforcement:** review; package names are feature nouns, not layer nouns (`controllers`/`services`/`repositories`), enforced by an architecture-test rule (Konsist/ArchUnit).
+
 ### 12.2 — Mirror package structure in the source tree.
 
 **Reasoning, step by step:**
 1. Kotlin doesn't *require* source layout to match package, but every tool (IDE, refactoring, code-search) assumes it.
 2. `src/main/kotlin/com/acme/checkout/api/CheckoutEndpoint.kt` is the path for `package com.acme.checkout.api`.
 3. Don't flatten or nest weirdly. The cost of getting it wrong is invisible-until-it-isn't.
+
+**Enforcement:** Detekt's `NoPackageMatchesPath`-style rule, or a Konsist test asserting file path equals package path.
 
 ### 12.3 — One module per deployable boundary, plus narrow shared modules.
 
@@ -27,6 +52,8 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 3. The cost of a module is build-time and cognitive: more modules = slower builds, harder navigation. The benefit is enforced boundaries.
 4. **Decision rule:** new module when (a) the code has an independent lifecycle (different release cadence), (b) the boundary is genuinely public (a client library, an SPI), or (c) the team is large enough that ownership benefits from compile-time separation.
 
+**Enforcement:** review at module-creation time against the decision rule; new Gradle subprojects justified in the PR.
+
 ### 12.4 — `internal` is the workhorse visibility for cross-package, same-module code.
 
 **Reasoning, step by step:**
@@ -34,6 +61,8 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 2. `public` is too wide — it exposes the symbol outside the module forever.
 3. `internal` is exactly right: visible to the whole module, invisible outside.
 4. Reach for `internal` aggressively. Only widen to `public` when an external caller actually needs the symbol.
+
+**Enforcement:** Detekt `explicit-api` mode flags un-annotated `public`; review widenings from `internal` to `public`.
 
 ### 12.5 — No cyclic dependencies. Ever.
 
@@ -43,6 +72,8 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 3. CI must check for cycles (Gradle's module graph + an analyzer task, or `jdeps` on JVM).
 4. **Resolving cycles:** extract the shared abstraction into a third module both depend on. Most cycles arise from a "shared utility" that's actually two unrelated utilities glued together.
 
+**Enforcement:** CI module-graph analyzer (Gradle dependency-analysis or `jdeps`) fails the build on any cycle.
+
 ### 12.6 — Public API surface is a deliberate, written-down list.
 
 **Reasoning, step by step:**
@@ -51,6 +82,8 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 3. A PR that changes the snapshot file changes the API. Review accordingly.
 4. This rule applies even to internal-use modules — the snapshot catches accidental over-exposure.
 
+**Enforcement:** `binary-compatibility-validator` `apiCheck` task in CI; a changed `.api` file blocks the merge until reviewed.
+
 ### 12.7 — Generated code lives in its own source set and isn't edited.
 
 **Reasoning, step by step:**
@@ -58,12 +91,16 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 2. It's never hand-edited. If you need to change generation, change the generator config.
 3. The generator runs as a build step; check the output into source control only if the generation is slow and rare. Otherwise generate on every build.
 
+**Enforcement:** generated source sets excluded from lint/format; CI re-generates and fails on any diff against checked-in output.
+
 ### 12.8 — Documentation lives with the code: README per module, KDoc per public symbol.
 
 **Reasoning, step by step:**
 1. A module has a `README.md` at its root explaining (a) what it does, (b) who uses it, (c) the public entry points.
 2. Every `public` symbol has KDoc. Every `internal` symbol has KDoc when the name doesn't fully document.
 3. **Anti-pattern:** READMEs that explain "what is Kotlin" or "how to run Gradle." Link out to canonical sources.
+
+**Enforcement:** Dokka run with `failOnWarning` flags missing KDoc on public symbols; review checks for a module `README.md`.
 
 ### 12.9 — Test code organization mirrors production.
 
@@ -73,6 +110,8 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 3. Test utilities (`UserFixture`, `anyOrder()`) live in `src/test/kotlin` under the package they're closest to, or in a `*-test-fixtures` source set if they're shared across modules.
 4. Integration tests in a separate source set (`src/integrationTest`) if you have any — keep them out of the main test run unless they're fast.
 
+**Enforcement:** Konsist test asserting each test file's package matches its production counterpart; integration source set wired to its own Gradle task.
+
 ### 12.10 — `expect`/`actual` declarations for multiplatform — and only where needed.
 
 **Reasoning, step by step:**
@@ -80,6 +119,8 @@ How code is grouped, named, and exposed across boundaries. The shape of your mod
 2. Use `expect`/`actual` only when the platform abstraction *is the API*. Most code should be platform-agnostic in `commonMain`.
 3. For server-side JVM-only projects, this is irrelevant — and that's fine.
 4. **Note:** this rule is here for projects that may go multiplatform. JVM-only readers can skip.
+
+**Enforcement:** review; `expect`/`actual` pairs justified against the "the abstraction is the API" test, otherwise kept in `commonMain`.
 
 ## Cross-references
 
