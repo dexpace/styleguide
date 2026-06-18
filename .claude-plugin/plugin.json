@@ -1,0 +1,9 @@
+{
+  "name": "dexpace-styleguide",
+  "description": "Enforces the dexpace per-language styleguides (Go, Kotlin, Python, TypeScript, C#, Ruby and their runtime extensions) when writing, editing, or reviewing code.",
+  "version": "0.1.0",
+  "author": { "name": "dexpace" },
+  "homepage": "https://github.com/dexpace/styleguide",
+  "repository": "https://github.com/dexpace/styleguide",
+  "license": "MIT"
+}

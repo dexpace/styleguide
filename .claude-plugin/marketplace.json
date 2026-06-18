@@ -1,0 +1,15 @@
+{
+  "name": "dexpace",
+  "owner": { "name": "dexpace", "url": "https://github.com/dexpace" },
+  "metadata": {
+    "description": "dexpace engineering plugins",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "dexpace-styleguide",
+      "source": "./",
+      "description": "Per-language styleguide enforcement skills for dexpace projects."
+    }
+  ]
+}
