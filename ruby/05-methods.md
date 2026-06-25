@@ -39,7 +39,7 @@ def tax_for(subtotal, jurisdiction:)
 end
 ```
 
-`Money` is minted in exactly one place — `Money.parse`, the parse-constructor that validates the integer-cents value before returning an immutable value object. Nothing else creates a `Money`. The public method sits above the two helpers it calls, so the file reads top-down (5.4). Guard clauses assert the preconditions and leave the happy path flush left (5.3). The keyword argument `now:` keeps the call site legible without a positional slot that callers can transpose (5.4 rule). A postcondition pair verifies the sum from both of its parts before return (5.12). Each method holds one level of abstraction — `settle_order` orchestrates named steps and touches no arithmetic itself (5.2). The helpers reach a `Money` only through `Money.parse`, the single parse-constructor that validates (per chapter 03).
+`Money` is generated in exactly one place — `Money.parse`, the parse-constructor that validates the integer-cents value before returning an immutable value object. Nothing else creates a `Money`. The public method sits above the two helpers it calls, so the file reads top-down (5.4). Guard clauses assert the preconditions and leave the happy path flush left (5.3). The keyword argument `now:` keeps the call site legible without a positional slot that callers can transpose (5.4 rule). A postcondition pair verifies the sum from both of its parts before return (5.12). Each method holds one level of abstraction — `settle_order` orchestrates named steps and touches no arithmetic itself (5.2). The helpers reach a `Money` only through `Money.parse`, the single parse-constructor that validates (per chapter 03).
 
 ## Rules
 

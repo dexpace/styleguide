@@ -112,7 +112,7 @@ public string Describe()                                        // good — bloc
 
 **Reasoning, step by step:**
 1. A call with three or more positional arguments is a row of unlabelled values at the call site — `Settle(amount, rate, account, true)` — where a reader cannot tell which `decimal` is which and a transposed pair compiles silently. Collecting them into an immutable `record` gives every argument a name at the call site, lets the caller use object-initializer or `with` syntax, and makes adding a field a non-breaking change instead of another positional slot (chapter [06](./06-types-and-data-modeling.md)).
-2. The record also becomes the home for the validation and the defaults: `required` members force the caller to supply what matters, `init` defaults fill the rest, and the parse-don't-validate boundary (chapter [03](./03-nullability-and-the-type-system.md)) can mint a proven options value once. Two well-named parameters need no ceremony; the threshold is three, where the loss of labelling starts to cost correctness.
+2. The record also becomes the home for the validation and the defaults: `required` members force the caller to supply what matters, `init` defaults fill the rest, and the parse-don't-validate boundary (chapter [03](./03-nullability-and-the-type-system.md)) can generate a proven options value once. Two well-named parameters need no ceremony; the threshold is three, where the loss of labelling starts to cost correctness.
 
 **Worked example:**
 ```csharp

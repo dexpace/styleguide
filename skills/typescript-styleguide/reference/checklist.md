@@ -39,7 +39,7 @@ One section per chapter. Read on demand for a full audit; the SKILL digest cover
 - Prefer optional `?` over `| undefined` in object types (`exactOptionalPropertyTypes` enforces the difference).
 - Narrow with the weakest tool that works: discriminant, then `typeof`/`instanceof`/`in`, then a custom guard.
 - Unit-test every custom type guard (`x is T`) with positive and negative cases.
-- Brand domain primitives in high-rigor modules; mint only through a validating constructor (the one sanctioned `as`).
+- Brand domain primitives in high-rigor modules; generate only through a validating constructor (the one sanctioned `as`).
 - Put `readonly`/`ReadonlyArray`/`Readonly<T>` in every public signature.
 - Constrain every generic; add no gratuitous type parameters; annotate variance (`in`/`out`) on public generic interfaces.
 - Write erasable syntax only: no `enum`, runtime `namespace`, parameter properties, or `import =`. Consume a codegen `enum` only at the boundary, convert to a union inside.

@@ -109,7 +109,7 @@ public readonly record struct ExpiryMonth
             : new Result<ExpiryMonth, string>.Err("month out of range");
 }
 ```
-**Enforcement:** review of boundary modules; the private constructor makes the factory the only mint.
+**Enforcement:** review of boundary modules; the private constructor makes the factory the only generator.
 
 ### 6.5 — Force construction-time completeness with `required` and `init`, not multi-step setters.
 

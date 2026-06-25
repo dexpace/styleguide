@@ -32,7 +32,7 @@ Bun runtime additions on top of `typescript-styleguide`. Additive only — never
 - Every route declares request AND response schemas; the outbound `.parse()` is a leak tripwire.
 - Handlers are thin: parse already-validated input, call one plain domain function, return; no Hono types in domain code. Test via `app.request()`, not a live socket or MSW.
 - One centralized `app.onError(mapError)` maps domain errors to `problem+json`; handlers never craft a 5xx; unknown errors map to a generic 500 carrying only the correlation id.
-- Every request carries a `correlationId`, minted or accepted once at the edge, propagated through `AsyncLocalStorage` via `store.run`.
+- Every request carries a `correlationId`, generated or accepted once at the edge, propagated through `AsyncLocalStorage` via `store.run`.
 - Set server timeouts explicitly: `idleTimeout` on the `Bun.serve` config and a per-route `timeout(...)`, kept under the upstream LB idle timeout.
 - Rate-limit at the edge with bounded store state (LRU max size or Redis TTL), `429` + `Retry-After`.
 - Health endpoints are honest: liveness does no dependency I/O (restart signal); readiness checks dependencies and fails first during drain (traffic signal).

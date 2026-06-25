@@ -77,7 +77,7 @@ parseUser(42);
 
 **Reasoning, step by step:**
 1. An assertion is an unproven claim to the compiler: "trust me, this is a `T`." The compiler stops checking and believes you. When you are wrong, the failure surfaces far from the lie.
-2. Reach for the proven alternatives first: `satisfies` checks a value against a type *without* widening it, and a guard or a parse (zod) establishes the type with a runtime check the compiler can see. When an assertion is genuinely unavoidable, such as minting a brand after validation (3.9) or narrowing a value the compiler cannot follow, it carries a comment stating why the claim holds.
+2. Reach for the proven alternatives first: `satisfies` checks a value against a type *without* widening it, and a guard or a parse (zod) establishes the type with a runtime check the compiler can see. When an assertion is genuinely unavoidable, such as generating a brand after validation (3.9) or narrowing a value the compiler cannot follow, it carries a comment stating why the claim holds.
 
 **Worked example:**
 ```ts
@@ -149,7 +149,7 @@ expect(isUser({id: 'u1'})).toBe(false);                 // negative space is man
 
 **Reasoning, step by step:**
 1. In a structural type system every `string` is interchangeable, so `UserId`, `OrderId`, and a raw email are one type and the compiler will happily pass one where another is meant. A brand attaches a phantom tag: `type UserId = string & {readonly __brand: 'UserId'}`. It costs nothing at runtime (the field never exists) but makes the values nominally distinct.
-2. A branded value can only be *created* through a parsing constructor that validates and mints it. That constructor is the single place an `as` is sanctioned (3.4), because the value is proven the line before.
+2. A branded value can only be *created* through a parsing constructor that validates and generates it. That constructor is the single place an `as` is sanctioned (3.4), because the value is proven the line before.
 
 **Worked example:**
 ```ts

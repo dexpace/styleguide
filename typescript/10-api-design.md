@@ -1,6 +1,6 @@
 # 10 — API Design
 
-Designing the surface other code imports. A package's public API is a promise: every name you export is a contract you keep for every caller, in every refactor, until a major version lets you break it. This chapter is about exporting the least, exporting it deliberately, and shaping what you do export so the call site reads as a family. The verb taxonomy ([chapter 02](./02-naming-conventions.md)), branded parse-mint boundary ([chapter 03](./03-the-type-system.md)), failure documentation ([chapter 08](./08-error-handling.md)), and cancellation ([chapter 09](./09-concurrency.md)) are the raw material; here they compose into a surface.
+Designing the surface other code imports. A package's public API is a promise: every name you export is a contract you keep for every caller, in every refactor, until a major version lets you break it. This chapter is about exporting the least, exporting it deliberately, and shaping what you do export so the call site reads as a family. The verb taxonomy ([chapter 02](./02-naming-conventions.md)), branded parse-generate boundary ([chapter 03](./03-the-type-system.md)), failure documentation ([chapter 08](./08-error-handling.md)), and cancellation ([chapter 09](./09-concurrency.md)) are the raw material; here they compose into a surface.
 
 ## What good looks like
 
@@ -14,7 +14,7 @@ export {UserNotFoundError} from './errors.js';
 import {z} from 'zod';
 export type UserId = string & {readonly __brand: 'UserId'};
 export const UserSchema = z.object({
-  id: z.uuid().transform((s): UserId => s as UserId), // parse-mint (ch. 03)
+  id: z.uuid().transform((s): UserId => s as UserId), // parse-generate (ch. 03)
   email: z.email(),
 }).readonly();
 export type User = z.infer<typeof UserSchema>; // single source of type truth
@@ -125,7 +125,7 @@ listUsers(options?: ListOptions & CallOptions): AsyncIterable<User> {}         /
 ### 10.7 — Put a zod schema at every external boundary; `z.infer` is the single source of type truth for wire data.
 
 **Reasoning, step by step:**
-1. Data crossing the wire — a `fetch` response, a request body, a queue message — arrives as `unknown` (3.2). It must be parsed into a domain type before the interior touches it, and the parser is a zod schema that validates shape and mints any brands (3.9) in one pass.
+1. Data crossing the wire — a `fetch` response, a request body, a queue message — arrives as `unknown` (3.2). It must be parsed into a domain type before the interior touches it, and the parser is a zod schema that validates shape and generates any brands (3.9) in one pass.
 2. The TypeScript type for that wire data is *derived from the schema*, never written alongside it: `type User = z.infer<typeof UserSchema>`. A hand-written `interface User` maintained next to the schema is two sources of truth that drift the moment one is edited and the other forgotten — and the drift is silent, because each compiles. One declaration, inferred, cannot drift from itself.
 3. Parse at the boundary, then trust the type inside. The schema runs once where the data enters; downstream code consumes the inferred type with no re-validation. Call `.readonly()` on the schema: it freezes the parsed value at runtime *and* makes `z.infer` yield a readonly type, so the data is immutable from birth (3.10) with no separate `Readonly<>` wrapper to remember.
 
@@ -193,7 +193,7 @@ for await (const u of listUsers()) if (u.isAdmin) break; // break stops early; l
 ## Cross-references
 
 - Client verb taxonomy (`get`/`list`/`create`/`upsert`/`update`/`delete`/`begin`) and call-site naming: [02-naming-conventions.md](./02-naming-conventions.md).
-- Branded primitives, parse-mint, `unknown` at the boundary, `readonly` signatures: [03-the-type-system.md](./03-the-type-system.md).
+- Branded primitives, parse-generate, `unknown` at the boundary, `readonly` signatures: [03-the-type-system.md](./03-the-type-system.md).
 - `max-params 3` forcing options objects: [01-formatting-and-tooling.md](./01-formatting-and-tooling.md); options-object construction: [05-functions.md](./05-functions.md).
 - `@throws` versus `Result`, documenting failure modes: [08-error-handling.md](./08-error-handling.md). `{ signal }` cancellation: [09-concurrency.md](./09-concurrency.md).
 - Barrels at the boundary, import cycles, tree-shaking: [12-module-organization.md](./12-module-organization.md). Semver and breaking-change discipline: [git-and-code-review.md](../git-and-code-review.md).

@@ -18,7 +18,7 @@ import { mapError } from './error-map.ts';               // the one domain-error
 const app = new Hono();
 
 app.use('*', async (c, next) => {                         // 3.6 — correlate before any handler runs
-  const correlationId = c.req.header('x-request-id') ?? randomUUID(); // accept inbound or mint
+  const correlationId = c.req.header('x-request-id') ?? randomUUID(); // accept inbound or generate
   await runWithRequestContext({ correlationId }, next);   // store.run wraps the rest of the request (ch. 06)
 });
 app.onError(mapError); // 3.5 — handlers never craft 5xx; one map owns error → problem+json
@@ -35,7 +35,7 @@ app.get(
 export default { fetch: app.fetch, idleTimeout: 30 }; // 3.7 — Bun.serve picks this up; idleTimeout is the slowloris guard
 ```
 
-Every byte is parsed before the handler sees it and every reply field is schema-checked on the way out (3.3); the handler is glue over `getUser`, a function the unit tests call with no HTTP in sight (3.4); failures route through one `onError` (3.5); a correlation id is minted or accepted once and threaded through `AsyncLocalStorage` so every downstream log line carries it (3.6); the server idle timeout is set explicitly on the exported `Bun.serve` config (3.7). This is the Hono-on-`Bun.serve` idiom (3.1) the rest of the chapter justifies rule by rule.
+Every byte is parsed before the handler sees it and every reply field is schema-checked on the way out (3.3); the handler is glue over `getUser`, a function the unit tests call with no HTTP in sight (3.4); failures route through one `onError` (3.5); a correlation id is generated or accepted once and threaded through `AsyncLocalStorage` so every downstream log line carries it (3.6); the server idle timeout is set explicitly on the exported `Bun.serve` config (3.7). This is the Hono-on-`Bun.serve` idiom (3.1) the rest of the chapter justifies rule by rule.
 
 ## Rules
 
@@ -128,14 +128,14 @@ app.onError((err, c) => {
 ### 3.6 — Every request carries a correlation id.
 
 **Reasoning, step by step:**
-1. A middleware registered with `app.use('*', ...)` either accepts an inbound `x-request-id` (so a trace spans services) or mints a fresh UUID when none arrives, via `randomUUID` from `node:crypto`. The id is decided once, at the very front of the request, before any handler or domain call.
+1. A middleware registered with `app.use('*', ...)` either accepts an inbound `x-request-id` (so a trace spans services) or generates a fresh UUID when none arrives, via `randomUUID` from `node:crypto`. The id is decided once, at the very front of the request, before any handler or domain call.
 2. It propagates through `AsyncLocalStorage` ([06](./06-logging.md)), which works unchanged on Bun, not by threading a parameter through every function. The middleware binds it with `store.run` wrapping the request continuation — `await store.run(ctx, next)` — the scoped form [06 §6.2](./06-logging.md) mandates over the mid-handler accessor it bans for leaking context into whatever runs next on the loop. Any code in the request's async context — domain function, repository, error handler — then reads the id from the store, so correlation survives `await` boundaries without polluting signatures.
 3. Every log line during the request carries that id, which makes the one boundary log (3.5) joinable to all that led to it — parity with the kotlin-jvm correlation contract ([kotlin-jvm 06](../kotlin-jvm/06-logging.md)): one id, set at the edge, on every line, across the whole call tree.
 4. The canonical log key is `correlationId`, set once here at the edge and read everywhere downstream ([06 §6.2](./06-logging.md)) — one name for the id in the child logger, the `AsyncLocalStorage` store, and every line, so a trace joins without reconciling synonyms.
 
 ```ts
 app.use('*', async (c, next) => {
-  const correlationId = c.req.header('x-request-id') ?? randomUUID(); // accept inbound or mint
+  const correlationId = c.req.header('x-request-id') ?? randomUUID(); // accept inbound or generate
   await runWithRequestContext({ correlationId }, next); // store.run wraps the request continuation, the scoped form ch. 06 §6.2 mandates
 });
 ```
