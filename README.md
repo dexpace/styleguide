@@ -13,6 +13,7 @@ This repository holds:
 
 - **Cross-cutting rules** (this README plus [security](./security.md), [performance](./performance.md), [git & code review](./git-and-code-review.md)) — apply to every language and runtime.
 - **Per-language guides** — adapt the cross-cutting rules to each language's idioms and add language-specific conventions. Each guide names a canonical upstream authority and extends it.
+- **Claude Code skills** ([`skills/`](./skills/)) — an installable plugin that loads each guide's rules into Claude Code while you write, edit, or review code. See [Claude Code skills](#claude-code-skills).
 
 ## Priority
 
@@ -64,6 +65,19 @@ Each guide adapts the cross-cutting rules to a specific language, names its cano
 
 Each guide is split into topic files (formatting, naming, error handling, concurrency, API design, testing, etc.). Read the guide's `README.md` for the index.
 
+## Claude Code skills
+
+This repo is also a [Claude Code](https://claude.com/claude-code) plugin. Every guide ships a matching skill under [`skills/`](./skills/) that loads its rules into context when Claude writes, edits, or reviews that language: the cross-cutting rules in language-native terms, the gotchas reviewers reject on, the function-size cap, and the formatter, linter, and typecheck gates. Each skill links back to the canonical chapters and carries a `reference/checklist.md` for full audits.
+
+Install once per project:
+
+```
+/plugin marketplace add dexpace/styleguide
+/plugin install dexpace-styleguide@dexpace
+```
+
+The guides stay the source of truth; the skills distill them and never override them. See [`skills/README.md`](./skills/README.md) for the full skill index and [`skills/SKILL-TEMPLATE.md`](./skills/SKILL-TEMPLATE.md) for the authoring contract.
+
 ## Cross-cutting guides
 
 | Guide | Scope |
@@ -100,3 +114,4 @@ When a project lands in a new language:
 3. Split topic files by concern. Look at `go/` and `kotlin/` for the shape: formatting, naming, errors, concurrency, API design, testing, etc.
 4. Add an entry to the "Per-language guides" table above.
 5. Each rule in each topic file should include step-by-step reasoning — not just "do X," but *why* doing X serves correctness, performance, or developer experience.
+6. Add a matching skill under `skills/<language>-styleguide/` per [`skills/SKILL-TEMPLATE.md`](./skills/SKILL-TEMPLATE.md), and register it in [`skills/README.md`](./skills/README.md).
