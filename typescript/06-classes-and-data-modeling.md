@@ -17,7 +17,7 @@ function assertNever(x: never): never {  // defined once — see 6.5
   throw new Error(`Unhandled variant: ${JSON.stringify(x)}`);
 }
 
-// Parse-then-mint: validate the raw string, then the one sanctioned `as` (6.11).
+// Parse-then-generate: validate the raw string, then the one sanctioned `as` (6.11).
 function toOrderId(raw: string): OrderId {
   if (raw === '') throw new Error('OrderId must be non-empty');
   return raw as OrderId;  // sanctioned: validated immediately above
@@ -197,7 +197,7 @@ interface User {readonly id: UserId; readonly email: string}
 
 function createUser(id: string, rawEmail: string): User {
   const email = emailSchema.parse(rawEmail);  // throws on invalid input
-  return {id: toUserId(id), email};           // constructor-free: parse-mint then assign (3.9, 6.11)
+  return {id: toUserId(id), email};           // constructor-free: parse-generate then assign (3.9, 6.11)
 }
 ```
 

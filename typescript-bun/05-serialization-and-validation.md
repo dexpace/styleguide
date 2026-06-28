@@ -163,6 +163,6 @@ const stored = await s3.file(`thumbs/${id}`).bytes();             // s3.file (S3
 ## Cross-references
 
 - zod at the boundary, `z.infer` as the single source of type truth: [core 10.7](../typescript/10-api-design.md). Boundary route rule, `unknown` inward, `any` banned, `undefined` over `null`: [core 03's §3.2, §3.5, §3.6](../typescript/03-the-type-system.md).
-- Branded `Cents`, integer minor units, the parse-mint constructor: [core 05](../typescript/05-functions.md).
+- Branded `Cents`, integer minor units, the parse-generate constructor: [core 05](../typescript/05-functions.md).
 - Null-versus-absent and time types, JVM parity: [kotlin-jvm serialization](../kotlin-jvm/05-serialization.md).
 - Parse every boundary, crash-only boot, dependency justification: BUN-3, BUN-1, BUN-4 ([README](./README.md)). Rows parsed at the edge: [persistence](./04-persistence.md). HTTP body limits and handlers: [HTTP services](./03-http-services.md).

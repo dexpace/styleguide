@@ -35,7 +35,7 @@ function taxFor(subtotal: Cents, jurisdiction: Jurisdiction): Cents {
 }
 ```
 
-`Cents` is minted in one place — a parse-constructor that validates, then performs the lone sanctioned `as` (3.9). Nothing else in the chapter casts to it:
+`Cents` is generated in one place — a parse-constructor that validates, then performs the lone sanctioned `as` (3.9). Nothing else in the chapter casts to it:
 
 ```ts
 function cents(n: number): Cents {
@@ -44,7 +44,7 @@ function cents(n: number): Cents {
 }
 ```
 
-The public function sits above the two helpers it calls, so the file reads top-down (5.4). Guard clauses assert the preconditions and leave the happy path flush left (5.3). The single object parameter keeps the call site legible (5.5), and a postcondition pair checks the sum is approached from both of its parts before it returns (5.7). Each function holds one level of abstraction — `settleInvoice` orchestrates named steps and touches no arithmetic itself (5.2). The helpers reach a `Cents` only through the `cents` mint, the single parse-constructor that validates and casts (3.9); `taxFor` guards the rate lookup because `noUncheckedIndexedAccess` (1.3) types the miss as `undefined`, so the flag forces the guard.
+The public function sits above the two helpers it calls, so the file reads top-down (5.4). Guard clauses assert the preconditions and leave the happy path flush left (5.3). The single object parameter keeps the call site legible (5.5), and a postcondition pair checks the sum is approached from both of its parts before it returns (5.7). Each function holds one level of abstraction — `settleInvoice` orchestrates named steps and touches no arithmetic itself (5.2). The helpers reach a `Cents` only through the `cents` generator, the single parse-constructor that validates and casts (3.9); `taxFor` guards the rate lookup because `noUncheckedIndexedAccess` (1.3) types the miss as `undefined`, so the flag forces the guard.
 
 ## Rules
 
