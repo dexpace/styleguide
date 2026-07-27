@@ -93,7 +93,7 @@ class ChargeService(private val gateway: Gateway) {
 1. Inheritance couples the lifecycle of two types forever. A subclass is a parent — any change to the parent affects every subclass.
 2. Composition: give the consumer the dependency, expose what you need on the public API.
 3. Code reuse via inheritance is almost always achievable via (a) extension functions on a common type, (b) delegation, (c) helper top-level functions, (d) a sealed hierarchy with a shared interface.
-4. **The Expedia SDK pattern** (worth absorbing): `class LoggerDecorator(private val logger: Logger) : Logger by logger { override fun info(m: String) = logger.info(decorate(m)) }`. Decoration in one line. No `open class AbstractLogger`.
+4. **Pattern worth absorbing:** `class LoggerDecorator(private val logger: Logger) : Logger by logger { override fun info(m: String) = logger.info(decorate(m)) }`. Decoration in one line. No `open class AbstractLogger`.
 
 **Enforcement:** review; reuse via delegation (`by`), extension functions, or sealed hierarchies, not an `abstract`/`open` base class.
 

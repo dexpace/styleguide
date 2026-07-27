@@ -79,7 +79,7 @@ The public surface stays `suspend`/`Flow`-shaped and the `Mono` is awaited at th
 2. Bridge with `kotlinx-coroutines-jdk8`: `scope.future { suspendingWork() }` returns `CompletableFuture<T>`.
 3. The bridge launches a coroutine in the given scope; cancelling the `CompletableFuture` cancels the coroutine. Pick a scope that owns the work's lifecycle.
 4. **Anti-pattern:** `GlobalScope.future { ... }` because it's convenient. The future has no owner; cancellation is meaningless.
-5. **From the Expedia SDK:** `OAuthAsyncManager` uses `CompletableFuture` internally because the transport is `AsyncTransport` with futures. The wrapping is honest and explicit; the bridge is named.
+5. **Worked example:** an `OAuthAsyncManager` uses `CompletableFuture` internally because the transport is `AsyncTransport` with futures. The wrapping is honest and explicit; the bridge is named.
 
 **Enforcement:** review; `scope.future { }` carries an owning scope, no `GlobalScope.future`.
 

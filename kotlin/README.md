@@ -82,7 +82,6 @@ This guide takes the Kotlin official coding conventions as canonical. The first 
 - **[Kotlin official coding conventions](https://kotlinlang.org/docs/coding-conventions.html)** — canonical authority. Where our guidance collides, the official conventions win (save the deviations above).
 - **[Google Android Kotlin style guide](https://developer.android.com/kotlin/style-guide)** — supplemental; useful for several rules even outside Android.
 - **[Effective Kotlin (Marcin Moskała)](https://kt.academy/book/effectivekotlin)** — the closest thing Kotlin has to a community canon.
-- **[Expedia Group Java SDK](https://github.com/ExpediaGroup/expediagroup-java-sdk)** — concrete examples of decoration via `by`, pipeline composition, sealed exceptions with correlation IDs.
 - **TigerBeetle Tiger Style** — assertion density, 60-line function limit, limits on everything, no recursion, zero technical debt.
 
 ## Applying Style Changes

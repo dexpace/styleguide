@@ -122,7 +122,7 @@ The logger is a file-scope `private val` whose name the empty `{}` infers (6.1, 
 1. Logs end up in aggregators, ticket systems, screenshots, and someone's terminal scrollback. They're effectively public.
 2. Forbidden in plain text: passwords, tokens, API keys, full credit-card numbers, full SSNs, full email addresses where regulations require, raw request/response bodies for sensitive endpoints.
 3. Mask at the source: substitute `"****"` for sensitive substrings, hash where the hash is useful (user IDs in some compliance regimes).
-4. **Pattern (from the Expedia SDK):** a `MaskingRegexFactory` builds regexes that match sensitive field names in JSON; a `MaskJson` step applies them before logging.
+4. **Pattern:** a `MaskingRegexFactory` builds regexes that match sensitive field names in JSON; a `MaskJson` step applies them before logging.
 5. PII discovery is a recurring audit; assume the auditor will read your logs.
 
 **Enforcement:** secret-scanning in CI plus a recurring PII log audit; masking applied at the source via `MaskingRegexFactory`/`MaskJson`.
@@ -151,7 +151,7 @@ The logger is a file-scope `private val` whose name the empty `{}` infers (6.1, 
 
 **Reasoning, step by step:**
 1. Adding `"[SDK] message"` prefixes inline is fragile and resists changing.
-2. The Expedia SDK's pattern: `class LoggerDecorator(private val logger: Logger) : Logger by logger { override fun info(m: String) = logger.info(decorate(m)) }`. Interface delegation gives you decoration in one line; you intercept exactly what you care about.
+2. Pattern: `class LoggerDecorator(private val logger: Logger) : Logger by logger { override fun info(m: String) = logger.info(decorate(m)) }`. Interface delegation gives you decoration in one line; you intercept exactly what you care about.
 3. For correlation context, prefer MDC. For library identification, a decorator. Both work; pick by who owns the context.
 4. Don't put environment info (region, hostname) in the message. Put it in MDC or in the appender's pattern. It's the same value for every log line.
 

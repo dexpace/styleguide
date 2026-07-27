@@ -99,5 +99,4 @@ Zero technical debt holds here as everywhere: what ships meets the design goals.
 - **[Kotlin documentation: Java interop](https://kotlinlang.org/docs/java-interop.html), [Calling Kotlin from Java](https://kotlinlang.org/docs/java-to-kotlin-interop.html)** — canonical interop reference.
 - **[Spring Boot reference, Kotlin section](https://docs.spring.io/spring-boot/reference/features/kotlin.html)**.
 - **[JEP 444 (Virtual Threads)](https://openjdk.org/jeps/444)** and `kotlinx-coroutines` docs on `Dispatchers.IO` vs virtual threads.
-- **[Expedia Group Java SDK](https://github.com/ExpediaGroup/expediagroup-java-sdk)** — JVM SDK exemplar (interface delegation, pipeline pattern, MDC/correlation, masking, sealed exceptions).
 - **[Kotlin binary-compatibility-validator](https://github.com/Kotlin/binary-compatibility-validator)**.

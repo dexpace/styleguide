@@ -180,5 +180,5 @@ The shell `settleInvoice` does I/O and pushes the computation into a pure helper
 ## Cross-references
 
 - `inline` performance trade-offs: chapter 15 (Performance).
-- Scope functions in detail (with the Expedia SDK pattern): chapter 07 (Kotlin Idioms).
+- Scope functions in detail (with the decorator pattern worked example): chapter 07 (Kotlin Idioms).
 - Extension functions on JVM and `@JvmName` mangling: [JVM guide chapter 01](../kotlin-jvm/01-java-interop.md).

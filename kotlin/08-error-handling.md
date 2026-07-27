@@ -103,7 +103,7 @@ suspend fun chargeCard(card: Card, amount: Cents): Result<Receipt, ChargeError> 
 2. Boundary functions catch and wrap: `try { repo.find(id) } catch (e: SQLException) { return Result.Err(StorageError.UnavailableDb(e)) }`.
 3. The wrapping function preserves the cause (`Throwable.cause`) so debug context isn't lost.
 4. **Anti-pattern:** wrapping every exception into a custom `*Exception` that carries no extra information. Either add information (correlation ID, request context, structured fields) or don't wrap.
-5. From the Expedia SDK: `ExpediaGroupAuthException(requestId, message, cause)` — the wrap is worth it because it adds correlation context.
+5. **Worked example:** `AuthException(requestId, message, cause)` — the wrap is worth it because it adds correlation context.
 
 **Enforcement:** review; foreign exception types are caught and translated at adapter modules, never observed in domain code.
 

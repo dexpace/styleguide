@@ -44,7 +44,7 @@ This file renames its synthetic class for Java (1.5) and exposes `fromCode` as a
 1. Without `@JvmStatic`, a companion-object method `fun parse(s: String): Foo` is callable from Java as `Foo.Companion.parse(s)` — verbose and unidiomatic.
 2. With `@JvmStatic`, Java sees `Foo.parse(s)` — exactly what Java callers expect of a static factory.
 3. Apply to: factory methods (`fromJson`, `of`, `create`), constants needed as fields (paired with `@JvmField`).
-4. **From the Expedia SDK:**
+4. **Worked example:**
    ```kotlin
    companion object {
        @JvmStatic
@@ -131,7 +131,7 @@ This file renames its synthetic class for Java (1.5) and exposes `fromCode` as a
 2. `@Throws(IOException::class)` adds the exception to the bytecode signature. Java now requires handling.
 3. Apply to: functions explicitly designed to throw checked exceptions that Java callers should handle.
 4. Don't apply to: every `throw` site. Kotlin's design is that callers handle exceptions where they make sense, not where the language compels them to.
-5. **From the Expedia SDK:**
+5. **Worked example:**
    ```kotlin
    @JvmStatic
    @Throws(IllegalArgumentException::class)

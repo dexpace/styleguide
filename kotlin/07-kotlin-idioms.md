@@ -43,7 +43,7 @@ fun classify(status: Int): String = when {       // when as an expression, singl
 2. Without `by`: write every method (`override fun debug(m: String) = l.debug(m)`, etc.) and remember to add new ones every time the interface grows. With `by`: the compiler does this for you and stays in sync.
 3. Use class delegation to add cross-cutting behavior (logging, metrics, tracing, masking) to an existing interface implementation.
 4. **Trap:** delegation captures the delegate *at construction*. If you swap out the implementation later (a field reassignment), the delegate continues calling the old one. For most cases this is fine — for swappable implementations, hand-write the override.
-5. **Worked pattern (from the Expedia SDK):**
+5. **Worked pattern:**
    ```kotlin
    class LoggerDecorator(private val logger: Logger) : Logger by logger {
        override fun info(msg: String) = logger.info(decorate(msg))
@@ -186,7 +186,7 @@ fun classify(status: Int): String = when {       // when as an expression, singl
 **Reasoning, step by step:**
 1. Need pagination over an unknown-length stream? Implement `Iterator<T>`. Need ordering? `Comparable<T>`. Need release on scope exit? `AutoCloseable`.
 2. The standard library has years of design behind these interfaces. They compose with `for`, `use`, sort functions, and every other piece of the stdlib that expects them.
-3. **Worked example (from the Expedia SDK):**
+3. **Worked example:**
    ```kotlin
    abstract class Paginator<T : PaginatedResponse<*, *>> : Iterator<T> {
        protected var hasNext = true
@@ -202,7 +202,7 @@ fun classify(status: Int): String = when {       // when as an expression, singl
 
 **Reasoning, step by step:**
 1. When you have a transformation that's the composition of several small steps, model it as a `List<Step>` and fold the input through it.
-2. Pattern (from the Expedia SDK):
+2. Pattern:
    ```kotlin
    fun interface RequestStep { operator fun invoke(req: Request): Request }
 

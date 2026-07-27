@@ -97,7 +97,6 @@ The rules above draw from many sources. Specific language guides defer to their 
 - **Elixir** — immutable data, pipeline composition, `{:ok, result}` / `{:error, reason}`, no objects.
 - **Zig** — structs + free functions, no hidden control flow, errors as values, exhaustive switches.
 - **TigerBeetle Tiger Style** — assertion density (2+ per function), pair assertions, positive and negative space, function size limits, limits on everything, no recursion, zero technical debt.
-- **[Expedia Group SDKs](https://github.com/ExpediaGroup)** — concrete examples of pipeline composition, interface decoration via delegation, sealed error hierarchies with correlation context.
 
 ## Applying Style Changes
 

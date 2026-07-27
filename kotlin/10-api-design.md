@@ -137,7 +137,7 @@ class BillingService internal constructor( // ctor not part of the contract (10.
 **Reasoning, step by step:**
 1. When a transformation is the *composition of several small steps*, model it as `List<Step>` and `fold`. Don't model it as `AbstractRequestProcessor` with `open` hooks.
 2. Each step is one class (or `fun interface`) with one responsibility. Steps are composable, testable, swappable.
-3. **Worked pattern (Expedia SDK):**
+3. **Worked pattern:**
    ```kotlin
    fun interface RequestStep { operator fun invoke(req: Request): Request }
    fun interface ResponseStep { operator fun invoke(res: Response): Response }
